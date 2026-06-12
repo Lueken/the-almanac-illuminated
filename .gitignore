@@ -1,0 +1,29 @@
+# Build output
+bin/
+obj/
+*.user
+*.suo
+
+# Per-machine settings (generated on first build)
+Properties/localSettings.props
+
+# Release artifacts — attached to GitHub Releases, not committed
+Releases/
+themarginaliaconjunction_*.zip
+
+# Asset symlink that the build target creates inside output (belt-and-suspenders)
+resources/assets-link
+
+# Blockbench working sources are kept under dev/ but the binaries needn't be diffed
+# (the shipped, exported shape lives under resources/assets/.../shapes/)
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
