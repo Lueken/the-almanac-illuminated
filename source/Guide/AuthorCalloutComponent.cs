@@ -57,19 +57,22 @@ public class AuthorCalloutComponent : RichTextComponent
         double clear = GuiElement.scaled(SealClear);
         double rpad = GuiElement.scaled(Pad);
 
+        // One constant left and right for the whole callout, so every wrapped
+        // line shares the exact same indent (per-section edges can differ a few px).
+        double left = double.MaxValue, right = 0;
+        foreach (var f in flowPath) { if (f.X1 < left) left = f.X1; if (f.X2 > right) right = f.X2; }
+        if (flowPath.Length == 0) { left = offsetX; right = offsetX; }
+
+        colLeft = left;
+        colRight = right;
+        double textLeft = left + clear;
+        double textRight = right - rpad;
+
         var narrowed = new TextFlowPath[flowPath.Length];
         for (int i = 0; i < flowPath.Length; i++)
-        {
-            var f = flowPath[i];
-            narrowed[i] = new TextFlowPath { X1 = f.X1 + clear, Y1 = f.Y1, X2 = f.X2 - rpad, Y2 = f.Y2 };
-        }
+            narrowed[i] = new TextFlowPath { X1 = textLeft, Y1 = flowPath[i].Y1, X2 = textRight, Y2 = flowPath[i].Y2 };
 
-        var col = GetCurrentFlowPathSection(flowPath, lineY) ?? (flowPath.Length > 0 ? flowPath[0] : null);
-        if (col != null) { colLeft = col.X1; colRight = col.X2; }
-
-        var sec = GetCurrentFlowPathSection(narrowed, lineY);
-        double startX = sec?.X1 ?? (narrowed.Length > 0 ? narrowed[0].X1 : offsetX);
-        return base.CalcBounds(narrowed, currentLineHeight, startX, lineY, out nextOffsetX);
+        return base.CalcBounds(narrowed, currentLineHeight, textLeft, lineY, out nextOffsetX);
     }
 
     public override void ComposeElements(Context ctx, ImageSurface surface)
