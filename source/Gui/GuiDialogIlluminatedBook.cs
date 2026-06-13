@@ -19,13 +19,15 @@ public class GuiDialogIlluminatedBook : GuiDialog
     private const double PageHeight = 580;
     private const double GutterWidth = 40;
 
-    private List<MockChapter.Section>? sections;
+    private readonly GuidePack? pack;
+    private List<RenderedSection>? sections;
     private int spreadIndex;
 
     public override string ToggleKeyCombinationCode => HotkeyCode;
 
-    public GuiDialogIlluminatedBook(ICoreClientAPI capi) : base(capi)
+    public GuiDialogIlluminatedBook(ICoreClientAPI capi, GuidePack? pack = null) : base(capi)
     {
+        this.pack = pack;
     }
 
     public override void OnGuiOpened()
@@ -35,11 +37,21 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (sections == null)
         {
             var sw = Stopwatch.StartNew();
-            sections = MockChapter.Generate(capi);
-            IlluminatedLogger.Info(capi, "book", $"Mock chapter generated: {sections.Count} sections in {sw.ElapsedMilliseconds} ms");
+            sections = pack != null
+                ? ChapterRenderer.Render(capi, pack, OnLinkClicked)
+                : MockChapter.Generate(capi);
+            IlluminatedLogger.Info(capi, "book",
+                $"{(pack != null ? $"Chapter '{pack.Title}'" : "Mock chapter")} rendered: {sections.Count} sections in {sw.ElapsedMilliseconds} ms");
         }
 
         ComposeSpread();
+    }
+
+    private void OnLinkClicked(LinkTextComponent link)
+    {
+        // Navigation (almanac://, handbook://) arrives with the nav/IA work.
+        // For now, log so we can see clicks resolve to our handler, not a browser.
+        IlluminatedLogger.Info(capi, "link", $"Clicked {link.Href}");
     }
 
     private void ComposeSpread()
@@ -70,7 +82,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
         var composer = capi.Gui
             .CreateCompo("illuminatedbook", dialogBounds)
             .AddShadedDialogBG(bgBounds)
-            .AddDialogTitleBar("The Almanac — Phase 0 spike", OnTitleBarClose)
+            .AddDialogTitleBar(pack?.Title ?? "The Almanac", OnTitleBarClose)
             .AddRichtext(sections[leftIdx].Components, leftPage, "leftpage");
 
         if (rightIdx < sections.Count)

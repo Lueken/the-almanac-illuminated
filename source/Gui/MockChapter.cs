@@ -12,10 +12,7 @@ namespace AlmanacIlluminated;
 /// </summary>
 public static class MockChapter
 {
-    /// <summary>One "section" of guide content — the unit a page is filled with.</summary>
-    public record Section(string Title, RichTextComponentBase[] Components);
-
-    public static List<Section> Generate(ICoreClientAPI capi, int sectionCount = 24)
+    public static List<RenderedSection> Generate(ICoreClientAPI capi, int sectionCount = 24)
     {
         // Grab a pool of real resolved itemstacks so the page renders genuine
         // 3D item slots — the expensive part we are here to measure.
@@ -45,7 +42,7 @@ public static class MockChapter
             "Foraging without poisoning yourself", "Ores worth chasing early", "The long road to metal",
         };
 
-        var sections = new List<Section>();
+        var sections = new List<RenderedSection>();
         for (int s = 0; s < sectionCount; s++)
         {
             // Drop-cap: oversized decorative first letter floated left, body text wraps.
@@ -81,7 +78,7 @@ public static class MockChapter
             comps.Add(new RichTextComponent(capi, "  ☑ Open The Almanac (you are doing this now)\n", checklistFont));
             comps.Add(new ClearFloatTextComponent(capi, 10));
 
-            sections.Add(new Section(loremTopics[s % loremTopics.Length], comps.ToArray()));
+            sections.Add(new RenderedSection(loremTopics[s % loremTopics.Length], comps.ToArray()));
         }
 
         return sections;
