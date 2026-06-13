@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Lueken/the-almanac-illuminated/main/docs/guide-pack.schema.json",
+  "title": "The Almanac: Illuminated guide pack",
+  "description": "A chapter for The Almanac. See docs/SCHEMA.md, which is canonical; this schema follows it.",
+  "type": "object",
+  "required": ["schemaVersion", "id", "title", "sections"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The format version this guide targets. Unrelated to the mod's own version."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique chapter id. Namespace it with your author domain, e.g. venah:fieldwright. Internal links resolve to it."
+    },
+    "gate": {
+      "type": "string",
+      "description": "The modid required for the chapter to appear. Omit to always show (front matter)."
+    },
+    "title": {
+      "$ref": "#/$defs/localizableString",
+      "description": "The chapter title. A literal or a #langkey."
+    },
+    "subtitle": {
+      "$ref": "#/$defs/localizableString",
+      "description": "One line under the title."
+    },
+    "byline": {
+      "$ref": "#/$defs/localizableString",
+      "description": "Attribution line, e.g. 'set down by Venah'. The author's-hand seal draws its initial from here."
+    },
+    "icon": {
+      "type": "string",
+      "description": "An itemstack code or texture path for the chapter's index icon."
+    },
+    "accentColor": {
+      "$ref": "#/$defs/hexColor",
+      "description": "The chapter's identity color, used on drop-caps and rules. Defaults to a parchment neutral."
+    },
+    "order": {
+      "type": "integer",
+      "description": "Gate-less (front matter) chapters only. Sort position among front matter, lower first. Ignored on gated chapters."
+    },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/section" },
+      "description": "The ordered content. The engine flows sections across the spread."
+    }
+  },
+  "$defs": {
+    "localizableString": {
+      "type": "string",
+      "description": "A literal, or a #langkey resolved through the game's lang system. Double a leading # to escape it."
+    },
+    "hexColor": {
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+    },
+    "section": {
+      "type": "object",
+      "required": ["blocks"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable anchor for internal links. Never shown. Must not change once links rely on it."
+        },
+        "title": {
+          "$ref": "#/$defs/localizableString",
+          "description": "Section title. Omit for a continuation section."
+        },
+        "pageBreakBefore": {
+          "type": "boolean",
+          "description": "Start this section on a fresh page (the left page of the next spread)."
+        },
+        "keepTogether": {
+          "type": "boolean",
+          "description": "Do not split this section across a page boundary. It moves whole to the next page if it does not fit."
+        },
+        "blocks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/block" }
+        }
+      }
+    },
+    "block": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "heading", "paragraph", "dropcap", "steps", "materials",
+            "recipe", "callout", "quest", "figure", "ledger", "divider", "link", "table"
+          ]
+        },
+        "requires": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Per-block gating. The block renders only when every listed mod is loaded."
+        },
+        "text": { "$ref": "#/$defs/localizableString" },
+        "level": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "dropcap": { "type": "boolean" },
+        "letter": { "type": "string" },
+        "items": { "type": "array" },
+        "ordered": { "type": "boolean" },
+        "recipe": { "type": "string" },
+        "output": { "type": "string" },
+        "variant": { "enum": ["author", "tip", "warning", "lore"] },
+        "icon": { "type": "string" },
+        "questId": { "type": "string" },
+        "image": { "type": "string" },
+        "caption": { "$ref": "#/$defs/localizableString" },
+        "align": { "enum": ["left", "right", "full"] },
+        "entries": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/localizableString" }
+        },
+        "ornament": { "type": "string" },
+        "to": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "heading" } } },
+          "then": { "required": ["text"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "paragraph" } } },
+          "then": { "required": ["text"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "dropcap" } } },
+          "then": { "required": ["letter"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "steps" } } },
+          "then": {
+            "required": ["items"],
+            "properties": {
+              "items": { "type": "array", "items": { "$ref": "#/$defs/localizableString" } }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "materials" } } },
+          "then": {
+            "required": ["items"],
+            "properties": {
+              "items": { "type": "array", "items": { "$ref": "#/$defs/materialItem" } }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "recipe" } } },
+          "then": {
+            "oneOf": [
+              { "required": ["recipe"], "not": { "required": ["output"] } },
+              { "required": ["output"], "not": { "required": ["recipe"] } }
+            ]
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "callout" } } },
+          "then": { "required": ["variant", "text"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "quest" } } },
+          "then": {
+            "required": ["items"],
+            "properties": {
+              "items": { "type": "array", "items": { "$ref": "#/$defs/questItem" } }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "figure" } } },
+          "then": { "required": ["image"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "ledger" } } },
+          "then": { "required": ["entries"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "link" } } },
+          "then": { "required": ["to", "text"] }
+        }
+      ]
+    },
+    "materialItem": {
+      "type": "object",
+      "required": ["code"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string", "description": "An item or block code, e.g. game:ingot-iron." },
+        "label": { "$ref": "#/$defs/localizableString" },
+        "count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "questItem": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "$ref": "#/$defs/localizableString" },
+        "done": { "type": "boolean" }
+      }
+    }
+  }
+}

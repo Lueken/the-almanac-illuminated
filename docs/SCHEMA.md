@@ -255,6 +255,25 @@ To write a literal that begins with `#`, double it. The value `##1 rule of the t
 
 ---
 
+## Validation
+
+A JSON Schema ships beside this document at `docs/guide-pack.schema.json`. It mirrors the rules above and gives you autocomplete and live error checking in any editor that reads JSON Schema.
+
+Point your guide file at it with a `$schema` line at the top:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/Lueken/the-almanac-illuminated/main/docs/guide-pack.schema.json",
+  "schemaVersion": 1,
+  "id": "you:your-chapter",
+  ...
+}
+```
+
+The game ignores that line. Your editor uses it. In VS Code it works as soon as the file is saved. The engine still does the final say at load time, but the schema catches the everyday mistakes first: an unknown block type, a missing required field, a `recipe` with both `recipe` and `output`, a misspelled property, a bad `variant` or `accentColor`. This document stays canonical. The schema follows it.
+
+---
+
 ## Planned for v0.2 and later
 
 - The `table` block, committed and deferred from v0.1.
