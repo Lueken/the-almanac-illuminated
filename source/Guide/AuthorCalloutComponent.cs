@@ -20,6 +20,9 @@ public class AuthorCalloutComponent : RichTextComponent
     private readonly CairoFont headingFont;
     private readonly CairoFont sealFont;
 
+    // Column extent captured in CalcBounds, for a full-width box.
+    private double colLeft, colRight;
+
     private const string HeadingText = "From the Author's Hand:";
 
     private const double Pad = 11;
@@ -38,7 +41,9 @@ public class AuthorCalloutComponent : RichTextComponent
     private static readonly double[] SealHi = { 0.82, 0.45, 0.38, 0.60 };
 
     public AuthorCalloutComponent(ICoreClientAPI api, string note, CairoFont bodyFont, string initial)
-        : base(api, "\n" + note, bodyFont)   // leading line reserves the heading row
+        // Leading blank line = heading row; trailing blank line = bottom padding.
+        // The blank lines extend the surface so the box never draws outside it.
+        : base(api, "\n" + note + "\n", bodyFont)
     {
         letter = initial;
         headingFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody)
@@ -59,6 +64,9 @@ public class AuthorCalloutComponent : RichTextComponent
             narrowed[i] = new TextFlowPath { X1 = f.X1 + clear, Y1 = f.Y1, X2 = f.X2 - rpad, Y2 = f.Y2 };
         }
 
+        var col = GetCurrentFlowPathSection(flowPath, lineY) ?? (flowPath.Length > 0 ? flowPath[0] : null);
+        if (col != null) { colLeft = col.X1; colRight = col.X2; }
+
         var sec = GetCurrentFlowPathSection(narrowed, lineY);
         double startX = sec?.X1 ?? (narrowed.Length > 0 ? narrowed[0].X1 : offsetX);
         return base.CalcBounds(narrowed, currentLineHeight, startX, lineY, out nextOffsetX);
@@ -70,19 +78,19 @@ public class AuthorCalloutComponent : RichTextComponent
 
         double s(double v) => GuiElement.scaled(v);
 
-        double minY = double.MaxValue, maxX = 0, maxY = 0;
+        double minY = double.MaxValue, maxY = 0;
         foreach (var b in BoundsPerLine)
         {
             if (b.Y < minY) minY = b.Y;
-            if (b.X + b.Width > maxX) maxX = b.X + b.Width;
             if (b.Y + b.Height > maxY) maxY = b.Y + b.Height;
         }
 
-        double x = 0;
-        double y = minY - s(Pad);
-        double w = maxX + s(Pad);
-        double h = (maxY - minY) + s(Pad) * 2;
-        if (h < s(SealDia) + s(Pad) * 2) h = s(SealDia) + s(Pad) * 2;
+        // Box spans the full column (consistent rectangle) and the line span
+        // (blank lines supply the inner padding), inset 1px so strokes stay in.
+        double x = colLeft + s(1);
+        double y = minY + s(1);
+        double w = (colRight - colLeft) - s(2);
+        double h = (maxY - minY) - s(2);
 
         ctx.NewPath();
         RoundRect(ctx, x, y, w, h, s(Radius));
@@ -106,7 +114,7 @@ public class AuthorCalloutComponent : RichTextComponent
         // Red heading on the reserved first line, in the text column
         headingFont.SetupContext(ctx);
         ctx.NewPath();
-        ctx.MoveTo(s(SealClear), minY + s(13));
+        ctx.MoveTo(colLeft + s(SealClear), minY + s(15));
         ctx.ShowText(HeadingText);
 
         // Wax seal in the left column, vertically centered on the box
