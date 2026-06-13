@@ -20,17 +20,18 @@ namespace AlmanacIlluminated;
 public static class FontRegistry
 {
     // Family names (verified from each font's name table). Use via CairoFont.WithFont(...).
-    public const string Script = "Eyesome Script";   // chapter titles, byline, drop-cap accents
+    // Script (Eyesome Script) is not bundled yet: its license is unconfirmed, so it
+    // is held out of the public repo. Re-add the file and a FontFiles entry once cleared.
+    public const string Script = "Eyesome Script";   // reserved, font not bundled
     public const string Sans = "Josefin Sans";       // UI chrome: tabs, keybinds, page numbers
     public const string DisplaySans = "Odibee Sans"; // small-caps section headers
 
-    // Shipped manuscript serifs (always available — no registration needed).
+    // Shipped manuscript serifs (always available, no registration needed).
     public const string SerifBody = "Lora";
     public const string SerifDecorative = "Almendra";
 
     private static readonly string[] FontFiles =
     {
-        "Eyesome-Script.otf",
         "JosefinSans-Regular.ttf", "JosefinSans-Bold.ttf",
         "JosefinSans-Italic.ttf", "JosefinSans-BoldItalic.ttf",
         "JosefinSans-SemiBold.ttf", "JosefinSans-Light.ttf",
