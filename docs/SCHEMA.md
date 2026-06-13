@@ -124,7 +124,7 @@ A block is `{ "type": "...", ...props }`. Any block may carry one common field:
 
 ### Deferred to v0.2. Do not work around it.
 
-`table`, type `"table"`, for stat grids: tool tiers, fuel burn times, temperatures. It is deferred on purpose. VTML does not lay out a real grid, and `steps` and `materials` must not be bent into fake tables. If you need a table in v0.1, wait for v0.2. The engine warns on a `table` block under v0.1 and skips it. It does not error, so an early guide degrades cleanly.
+`table`, type `"table"`, for stat grids: tool tiers, fuel burn times, temperatures. It is deferred on purpose. Nothing in the game lays out a real grid for us. VTML has no table tag, and the richtext engine offers only inline and left or right floats, which cannot hold columns aligned from one row to the next. A real table needs a custom column-layout component, and that is v0.2 work. Until then, do not bend `steps` or `materials` into fake tables. The engine warns on a `table` block under v0.1 and skips it. It does not error, so an early guide degrades cleanly.
 
 ---
 
