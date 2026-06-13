@@ -28,6 +28,19 @@
         { "type": "callout", "variant": "author",
           "text": "Keep chapters short. A reader opens the book mid-task and wants the one thing they came for, not an essay." }
       ]
+    },
+    {
+      "id": "what-a-chapter-holds",
+      "title": "What a chapter can hold",
+      "blocks": [
+        { "type": "paragraph",
+          "text": "A chapter is built from blocks. Among them are illustrations and live crafting recipes, both drawn by the book." },
+        { "type": "figure", "image": "game:textures/gui/logo.png", "align": "full",
+          "caption": "A figure scales to fit the column, caption set beneath it." },
+        { "type": "paragraph",
+          "text": "A recipe block reuses the handbook's own grid, so it stays correct as the game changes:" },
+        { "type": "recipe", "output": "game:bandage-clean" }
+      ]
     }
   ]
 }

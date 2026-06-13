@@ -158,12 +158,30 @@ public static class ChapterRenderer
             }
 
             case "recipe":
-                comps.Add(new RichTextComponent(capi, $"[recipe: {block.Str("recipe") ?? block.Str("output") ?? "?"}]\n", italic));
+            {
+                comps.Add(new RichTextComponent(capi, "\n", body));
+                var rc = BuildRecipe(capi, block);
+                comps.Add(rc ?? new RichTextComponent(capi, "(recipe unavailable)\n", italic));
+                comps.Add(new RichTextComponent(capi, "\n", body));
                 break;
+            }
 
             case "figure":
-                comps.Add(new RichTextComponent(capi, $"[figure: {block.Str("image") ?? "?"}]\n", italic));
+            {
+                comps.Add(new RichTextComponent(capi, "\n", body));
+                comps.Add(new FigureComponent(capi, block.Str("image") ?? "", block.Str("align")));
+                string? caption = block.Str("caption");
+                if (!string.IsNullOrEmpty(caption))
+                {
+                    var capFont = italic.Clone().WithOrientation(EnumTextOrientation.Center);
+                    comps.Add(new RichTextComponent(capi, "\n" + caption + "\n", capFont));
+                }
+                else
+                {
+                    comps.Add(new RichTextComponent(capi, "\n", body));
+                }
                 break;
+            }
 
             case "table":
                 IlluminatedLogger.Warn(capi, "renderer", "table block is deferred to v0.2, skipped");
@@ -172,6 +190,52 @@ public static class ChapterRenderer
             default:
                 IlluminatedLogger.Warn(capi, "renderer", $"Unknown block type '{block.Type}', skipped");
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Builds the handbook's own grid-recipe component for a recipe block.
+    /// `recipe` matches one recipe by its name; `output` matches every recipe that
+    /// produces the given item, the way the handbook does. Returns null (and warns)
+    /// when nothing matches or the native component cannot resolve its ingredients.
+    /// </summary>
+    private static RichTextComponentBase? BuildRecipe(ICoreClientAPI capi, GuideBlock block)
+    {
+        string? recipeCode = block.Str("recipe");
+        string? outputCode = block.Str("output");
+        var found = new List<GridRecipe>();
+
+        if (!string.IsNullOrEmpty(recipeCode))
+        {
+            var loc = new AssetLocation(recipeCode);
+            foreach (var gr in capi.World.GridRecipes)
+                if (gr.Name != null && gr.Name.Equals(loc)) found.Add(gr);
+        }
+        else if (!string.IsNullOrEmpty(outputCode))
+        {
+            var loc = new AssetLocation(outputCode);
+            foreach (var gr in capi.World.GridRecipes)
+            {
+                var os = gr.Output?.ResolvedItemStack;
+                if (os?.Collectible?.Code != null && os.Collectible.Code.Equals(loc)) found.Add(gr);
+            }
+        }
+
+        if (found.Count == 0)
+        {
+            IlluminatedLogger.Warn(capi, "renderer", $"recipe block: no grid recipe matched '{recipeCode ?? outputCode ?? "(none)"}'");
+            return null;
+        }
+
+        try
+        {
+            // onStackClicked: handbook-style stack navigation lands with the IA work (#6).
+            return new SlideshowGridRecipeTextComponent(capi, found.ToArray(), 40, EnumFloat.None, _ => { });
+        }
+        catch (Exception e)
+        {
+            IlluminatedLogger.Warn(capi, "renderer", $"recipe block could not compose '{recipeCode ?? outputCode}': {e.Message}");
+            return null;
         }
     }
 
