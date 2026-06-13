@@ -78,12 +78,10 @@ public class GuiDialogIlluminatedBook : GuiDialog
             composer.AddRichtext(sections[rightIdx].Components, rightPage, "rightpage");
         }
 
-        // UI chrome in Josefin Sans (role split): page label + keybind hints
-        var chromeFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.Sans);
         composer
             .AddSmallButton("◀ Previous", OnPrevPage, prevBtn)
             .AddRichtext($"<font align=\"center\">Spread {spreadIndex + 1} / {maxSpread + 1}</font>",
-                chromeFont, pageLabel, "pagelabel")
+                CairoFont.WhiteSmallText(), pageLabel, "pagelabel")
             .AddSmallButton("Next ▶", OnNextPage, nextBtn);
 
         SingleComposer = composer.Compose();

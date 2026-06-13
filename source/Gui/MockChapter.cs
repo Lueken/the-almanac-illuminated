@@ -28,13 +28,12 @@ public static class MockChapter
         }
         IlluminatedLogger.Debug(capi, "mockchapter", $"Resolved {stackPool.Count} itemstacks for the spike pool");
 
-        // Role split (locked 2026-06-12): manuscript serifs carry reading, the
-        // custom fonts accent. Lora=body/ledger, Almendra/Eyesome=drop-cap accent,
-        // Odibee Sans=small-caps section headers, Eyesome Script=byline,
-        // Josefin Sans=UI chrome (set on the dialog, not here).
-        var headingFont = CairoFont.WhiteSmallishText().WithFont(FontRegistry.DisplaySans);          // section header, uppercased below
-        var bylineFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.Script).WithFontSize(20f); // Eyesome Script accent
-        var dropCapFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.Script).WithFontSize(40f); // flowing script drop-cap
+        // Aesthetic decision (2026-06-12): less is more — manuscript serifs only.
+        // Almendra headers/drop-cap, Lora body/ledger. The custom fonts (Eyesome,
+        // Josefin, Odibee) are registered and available (see FontRegistry) but
+        // held in reserve for sparing accent use later, not the default chrome.
+        var headingFont = CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold);
+        var dropCapFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifDecorative).WithFontSize(34f).WithWeight(Cairo.FontWeight.Bold);
         var bodyFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody);
         var checklistFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithSlant(Cairo.FontSlant.Italic);
 
@@ -56,11 +55,8 @@ public static class MockChapter
                 "Follow the steps below and the new flow becomes second nature within a session.\n";
             var comps = new List<RichTextComponentBase>
             {
-                // Section header in Odibee Sans, uppercased (faux small-caps — toy API has no real ones)
-                new RichTextComponent(capi, loremTopics[s % loremTopics.Length].ToUpperInvariant() + "\n", headingFont),
-                // Eyesome Script byline accent
-                new RichTextComponent(capi, "set down by Venah\n", bylineFont),
-                // Flowing script drop-cap, body wraps around it
+                new RichTextComponent(capi, loremTopics[s % loremTopics.Length] + "\n", headingFont),
+                // Almendra drop-cap, body wraps around it
                 new RichTextComponent(capi, "Y", dropCapFont) { Float = EnumFloat.Left, PaddingRight = 4 },
                 new RichTextComponent(capi, body, bodyFont),
             };
