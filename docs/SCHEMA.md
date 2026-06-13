@@ -8,12 +8,12 @@ Status: v0.1 draft, 2026-06-12. This document is canonical. The published JSON S
 
 ## 1. Two version numbers. Keep them apart.
 
-| Number | Lives in | Declares |
-|--------|----------|----------|
-| `schemaVersion` | the guide pack | which format version the author wrote against |
-| mod version | `modinfo.json` | the mod's own release version |
+| Field | Lives in | Declares |
+|-------|----------|----------|
+| `schemaVersion` | the guide pack JSON | which format version the author wrote against |
+| `version` | the mod's `modinfo.json` | the mod's own release version |
 
-The two are unrelated. A guide does not break when its mod changes version. A guide breaks only when the engine drops support for its `schemaVersion`. Set `schemaVersion` once. Revisit it when you adopt a newer format feature, not before.
+The two are unrelated. A guide does not break when the mod's `version` changes. A guide breaks only when the engine drops support for its `schemaVersion`. Set `schemaVersion` once. Revisit it when you adopt a newer format feature, not before.
 
 ---
 
