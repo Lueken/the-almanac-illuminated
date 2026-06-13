@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "almanacilluminated:welcome",
+  "title": "Welcome to The Almanac",
+  "subtitle": "How this book works",
+  "byline": "set down by Venah",
+  "accentColor": "#7a5a2e",
+  "sections": [
+    {
+      "id": "what-this-is",
+      "title": "What this is",
+      "blocks": [
+        { "type": "paragraph", "dropcap": true,
+          "text": "This book gathers guide chapters from the mods you have loaded. A chapter appears only when its mod is present, so your Almanac always matches your modlist." },
+        { "type": "steps", "items": [
+          "Press Alt+J to open the book.",
+          "Use the tabs to find a mod.",
+          "Turn the page to read its chapter."
+        ]}
+      ]
+    },
+    {
+      "id": "for-authors",
+      "title": "For mod authors",
+      "blocks": [
+        { "type": "paragraph",
+          "text": "Write a chapter as plain JSON and ship it in your own mod. The format is documented in the repository. The book owns layout, fonts, and gating. You bring the content." }
+      ]
+    }
+  ]
+}

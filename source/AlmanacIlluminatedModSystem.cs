@@ -12,8 +12,18 @@ public class AlmanacIlluminatedModSystem : ModSystem
 {
     private ICoreClientAPI? capi;
     private GuiDialogIlluminatedBook? bookDialog;
+    private List<GuidePack> guidePacks = new();
 
     public override bool ShouldLoad(EnumAppSide side) => side == EnumAppSide.Client;
+
+    public override void AssetsLoaded(ICoreAPI api)
+    {
+        // Assets are available here, before StartClientSide. Discover guide packs.
+        if (api is ICoreClientAPI clientApi)
+        {
+            guidePacks = GuidePackLoader.Load(clientApi);
+        }
+    }
 
     public override void StartClientSide(ICoreClientAPI api)
     {
