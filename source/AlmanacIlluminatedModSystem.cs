@@ -16,6 +16,18 @@ public class AlmanacIlluminatedModSystem : ModSystem
 
     public override bool ShouldLoad(EnumAppSide side) => side == EnumAppSide.Client;
 
+    public override void StartPre(ICoreAPI api)
+    {
+        // `almanac` is a custom asset category. The disk scanner only indexes
+        // known categories, so register it before assets load. Without this,
+        // guide files at almanac/guides/*.json are never read. Universal side,
+        // does not affect gameplay sync.
+        if (AssetCategory.FromCode("almanac") == null)
+        {
+            new AssetCategory("almanac", false, EnumAppSide.Universal);
+        }
+    }
+
     public override void AssetsLoaded(ICoreAPI api)
     {
         // Assets are available here, before StartClientSide. Discover guide packs.
