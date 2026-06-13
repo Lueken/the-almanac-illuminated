@@ -25,6 +25,8 @@ public static class ChapterRenderer
         var italic = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithSlant(Cairo.FontSlant.Italic).WithColor(Ink);
         var dropCap = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifDecorative).WithFontSize(34f).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink);
 
+        string initial = DeriveInitial(pack.Byline, pack.Title);
+
         var sections = new List<RenderedSection>();
         foreach (var sec in pack.Sections)
         {
@@ -35,12 +37,23 @@ public static class ChapterRenderer
             foreach (var block in sec.Blocks)
             {
                 if (!Gated(capi, block)) continue;
-                RenderBlock(capi, block, comps, body, italic, dropCap, onLink);
+                RenderBlock(capi, block, comps, body, italic, dropCap, onLink, initial);
             }
 
             sections.Add(new RenderedSection(sec.Title ?? "", comps.ToArray()));
         }
         return sections;
+    }
+
+    /// <summary>The author's first initial, for the wax seal. From the byline ("... by Venah" -> "V"), else the title.</summary>
+    private static string DeriveInitial(string? byline, string? title)
+    {
+        string src = byline ?? title ?? "";
+        int by = src.LastIndexOf("by ", StringComparison.OrdinalIgnoreCase);
+        if (by >= 0) src = src.Substring(by + 3);
+        foreach (char c in src.Trim())
+            if (char.IsLetter(c)) return char.ToUpperInvariant(c).ToString();
+        return "A";
     }
 
     private static bool Gated(ICoreClientAPI capi, GuideBlock block)
@@ -52,7 +65,7 @@ public static class ChapterRenderer
     }
 
     private static void RenderBlock(ICoreClientAPI capi, GuideBlock block, List<RichTextComponentBase> comps,
-        CairoFont body, CairoFont italic, CairoFont dropCap, Action<LinkTextComponent>? onLink)
+        CairoFont body, CairoFont italic, CairoFont dropCap, Action<LinkTextComponent>? onLink, string authorInitial)
     {
         switch (block.Type)
         {
@@ -104,9 +117,17 @@ public static class ChapterRenderer
 
             case "callout":
             {
-                var (box, bar) = CalloutColors(block.Str("variant") ?? "author");
+                string variant = block.Str("variant") ?? "author";
                 comps.Add(new RichTextComponent(capi, "\n", body));
-                comps.Add(new CalloutComponent(capi, (block.Str("text") ?? "") + "\n", italic, box, bar));
+                if (variant == "author")
+                {
+                    comps.Add(new AuthorCalloutComponent(capi, block.Str("text") ?? "", italic, authorInitial));
+                }
+                else
+                {
+                    var (fill, line) = CalloutColors(variant);
+                    comps.Add(new CalloutComponent(capi, (block.Str("text") ?? "") + "\n", italic, fill, line));
+                }
                 comps.Add(new RichTextComponent(capi, "\n", body));
                 break;
             }
@@ -154,13 +175,13 @@ public static class ChapterRenderer
         }
     }
 
-    /// <summary>Box fill and left-bar colors per callout variant. Variant owns the color, not the chapter accent.</summary>
-    private static (double[] box, double[] bar) CalloutColors(string variant) => variant switch
+    /// <summary>Interior fill and border color per callout variant. Variant owns the color, not the chapter accent.</summary>
+    private static (double[] fill, double[] border) CalloutColors(string variant) => variant switch
     {
-        "tip"     => (new[] { 0.80, 0.86, 0.70, 1.0 }, new[] { 0.34, 0.50, 0.20, 1.0 }),
-        "warning" => (new[] { 0.92, 0.80, 0.72, 1.0 }, new[] { 0.70, 0.28, 0.14, 1.0 }),
-        "lore"    => (new[] { 0.80, 0.82, 0.90, 1.0 }, new[] { 0.30, 0.34, 0.55, 1.0 }),
-        _         => (new[] { 0.87, 0.79, 0.61, 1.0 }, new[] { 0.48, 0.36, 0.18, 1.0 }), // author
+        "tip"     => (new[] { 0.91, 0.96, 0.89, 1.0 }, new[] { 0.15, 0.45, 0.20, 1.0 }),
+        "warning" => (new[] { 0.97, 0.93, 0.82, 1.0 }, new[] { 0.65, 0.40, 0.05, 1.0 }),
+        "lore"    => (new[] { 0.91, 0.90, 0.97, 1.0 }, new[] { 0.25, 0.20, 0.55, 1.0 }),
+        _         => (new[] { 0.97, 0.94, 0.85, 1.0 }, new[] { 0.72, 0.13, 0.08, 1.0 }),
     };
 
     private static JArray Arr(GuideBlock block, string key)
