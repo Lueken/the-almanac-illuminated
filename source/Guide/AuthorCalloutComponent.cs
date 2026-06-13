@@ -41,9 +41,10 @@ public class AuthorCalloutComponent : RichTextComponent
     private static readonly double[] SealHi = { 0.82, 0.45, 0.38, 0.60 };
 
     public AuthorCalloutComponent(ICoreClientAPI api, string note, CairoFont bodyFont, string initial)
-        // Leading blank line = heading row; trailing blank line = bottom padding.
-        // The blank lines extend the surface so the box never draws outside it.
-        : base(api, "\n" + note + "\n", bodyFont)
+        // Two leading blank lines (top padding + heading row) and a trailing
+        // blank line (bottom padding). The blanks extend the surface so the box
+        // never draws outside it, and give even breathing room top and bottom.
+        : base(api, "\n\n" + note + "\n", bodyFont)
     {
         letter = initial;
         headingFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody)
@@ -115,9 +116,11 @@ public class AuthorCalloutComponent : RichTextComponent
         base.ComposeElements(ctx, surface);
 
         // Red heading on the reserved first line, in the text column
+        // Heading sits on the second line (the first is top padding).
+        double headY = BoundsPerLine.Length > 1 ? BoundsPerLine[1].Y : minY;
         headingFont.SetupContext(ctx);
         ctx.NewPath();
-        ctx.MoveTo(colLeft + s(SealClear), minY + s(15));
+        ctx.MoveTo(colLeft + s(SealClear), headY + s(15));
         ctx.ShowText(HeadingText);
 
         // Wax seal in the left column, vertically centered on the box
