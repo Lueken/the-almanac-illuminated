@@ -1,8 +1,10 @@
 using System.Diagnostics;
+using System.Linq;
 using Cairo;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
+using Vintagestory.API.MathTools;
 
 namespace AlmanacIlluminated;
 
@@ -21,7 +23,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
     private const double ScreenFraction = 0.84;
 
     private readonly GuidePack? pack;
-    private List<RenderedSection>? sections;
+    private List<RichTextComponentBase[]>? pages;
     private int spreadIndex;
 
     public override string ToggleKeyCombinationCode => HotkeyCode;
@@ -34,17 +36,8 @@ public class GuiDialogIlluminatedBook : GuiDialog
     public override void OnGuiOpened()
     {
         base.OnGuiOpened();
-
-        if (sections == null)
-        {
-            var sw = Stopwatch.StartNew();
-            sections = pack != null
-                ? ChapterRenderer.Render(capi, pack, OnLinkClicked)
-                : MockChapter.Generate(capi);
-            IlluminatedLogger.Info(capi, "book",
-                $"{(pack != null ? $"Chapter '{pack.Title}'" : "Mock chapter")} rendered: {sections.Count} sections in {sw.ElapsedMilliseconds} ms");
-        }
-
+        // Pagination needs the live page geometry, so it runs lazily inside the
+        // first ComposeSpread rather than here.
         ComposeSpread();
     }
 
@@ -57,13 +50,6 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
     private void ComposeSpread()
     {
-        if (sections == null || sections.Count == 0) return;
-
-        var sw = Stopwatch.StartNew();
-
-        int leftIdx = spreadIndex * 2;
-        int rightIdx = leftIdx + 1;
-
         // Size the book to a fraction of the screen. GUI bounds are unscaled
         // units that get multiplied by GUIScale at render, so divide it out.
         double scale = RuntimeEnv.GUIScale <= 0 ? 1 : RuntimeEnv.GUIScale;
@@ -74,6 +60,27 @@ public class GuiDialogIlluminatedBook : GuiDialog
         double pageH = System.Math.Max(140, targetH - titleBar - btnRow - pad * 2);
         double pageW = System.Math.Max(180, (targetW - gutter - pad * 2) / 2);
         double pageY = titleBar + pad;
+        double contentW = pageW - inset * 2;
+        double contentH = pageH - inset * 2;
+
+        // Paginate once, against the real page geometry computed above.
+        if (pages == null)
+        {
+            var psw = Stopwatch.StartNew();
+            pages = pack != null
+                ? ChapterRenderer.RenderPages(capi, pack, OnLinkClicked, contentW, contentH)
+                : MockChapter.Generate(capi).Select(s => s.Components).ToList();
+            IlluminatedLogger.Info(capi, "book",
+                $"{(pack != null ? $"Chapter '{pack.Title}'" : "Mock chapter")} paginated: {pages.Count} pages in {psw.ElapsedMilliseconds} ms");
+            spreadIndex = GameMath.Clamp(spreadIndex, 0, System.Math.Max(0, (pages.Count - 1) / 2));
+        }
+
+        if (pages.Count == 0) return;
+
+        var sw = Stopwatch.StartNew();
+
+        int leftIdx = spreadIndex * 2;
+        int rightIdx = leftIdx + 1;
 
         ElementBounds dialogBounds = ElementBounds.Fixed(0, 0, targetW, targetH).WithAlignment(EnumDialogArea.CenterMiddle);
         ElementBounds bgBounds = ElementBounds.Fill;
@@ -90,7 +97,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
         bgBounds.WithChildren(leftPanel, rightPanel, leftText, rightText, prevBtn, pageLabel, nextBtn);
 
-        int maxSpread = (sections.Count - 1) / 2;
+        int maxSpread = (pages.Count - 1) / 2;
 
         var composer = capi.Gui
             .CreateCompo("illuminatedbook", dialogBounds)
@@ -98,11 +105,11 @@ public class GuiDialogIlluminatedBook : GuiDialog
             .AddDialogTitleBar(pack?.Title ?? "The Almanac", OnTitleBarClose)
             .AddStaticCustomDraw(leftPanel, DrawPage)
             .AddStaticCustomDraw(rightPanel, DrawPage)
-            .AddRichtext(sections[leftIdx].Components, leftText, "leftpage");
+            .AddRichtext(pages[leftIdx], leftText, "leftpage");
 
-        if (rightIdx < sections.Count)
+        if (rightIdx < pages.Count)
         {
-            composer.AddRichtext(sections[rightIdx].Components, rightText, "rightpage");
+            composer.AddRichtext(pages[rightIdx], rightText, "rightpage");
         }
 
         composer
@@ -146,7 +153,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
     private bool OnNextPage()
     {
-        if (sections != null && (spreadIndex + 1) * 2 < sections.Count)
+        if (pages != null && (spreadIndex + 1) * 2 < pages.Count)
         {
             spreadIndex++;
             PlayPageTurnSound();

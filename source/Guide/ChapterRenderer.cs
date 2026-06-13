@@ -1,6 +1,7 @@
 using Newtonsoft.Json.Linq;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.API.Config;
 
 namespace AlmanacIlluminated;
 
@@ -18,7 +19,31 @@ public static class ChapterRenderer
     // Dark ink, for reading on parchment.
     private static readonly double[] Ink = { 0.13, 0.09, 0.05, 1 };
 
-    public static List<RenderedSection> Render(ICoreClientAPI capi, GuidePack pack, Action<LinkTextComponent>? onLink)
+    /// <summary>
+    /// Renders a chapter into book pages. Every block is laid out and measured at
+    /// the page width, then blocks are packed into page-height columns. A section
+    /// with keepTogether stays whole; pageBreakBefore forces a fresh page; a title
+    /// never orphans from its first block. Returns one component array per page.
+    /// </summary>
+    public static List<RichTextComponentBase[]> RenderPages(ICoreClientAPI capi, GuidePack pack, Action<LinkTextComponent>? onLink, double pageWidth, double pageHeight)
+    {
+        var atoms = BuildAtoms(capi, pack, onLink);
+        return Paginate(capi, atoms, pageWidth, pageHeight);
+    }
+
+    /// <summary>An indivisible run of components the paginator places as one unit.</summary>
+    private sealed class Atom
+    {
+        public readonly List<RichTextComponentBase> Comps = new();
+        public bool PageBreakBefore;
+    }
+
+    /// <summary>
+    /// Turns a chapter into the flowable atoms the paginator packs. A keepTogether
+    /// section is a single atom. Otherwise the title binds to the first block (so a
+    /// heading never ends a page alone) and each later block is its own atom.
+    /// </summary>
+    private static List<Atom> BuildAtoms(ICoreClientAPI capi, GuidePack pack, Action<LinkTextComponent>? onLink)
     {
         var heading = CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink);
         var body = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithColor(Ink);
@@ -26,23 +51,99 @@ public static class ChapterRenderer
         var dropCap = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifDecorative).WithFontSize(34f).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink);
 
         string initial = DeriveInitial(pack.Byline, pack.Title);
+        var atoms = new List<Atom>();
 
-        var sections = new List<RenderedSection>();
         foreach (var sec in pack.Sections)
         {
-            var comps = new List<RichTextComponentBase>();
+            var title = new List<RichTextComponentBase>();
             if (!string.IsNullOrEmpty(sec.Title))
-                comps.Add(new RichTextComponent(capi, sec.Title + "\n", heading));
+                title.Add(new RichTextComponent(capi, sec.Title + "\n", heading));
 
+            var blockLists = new List<List<RichTextComponentBase>>();
             foreach (var block in sec.Blocks)
             {
                 if (!Gated(capi, block)) continue;
-                RenderBlock(capi, block, comps, body, italic, dropCap, onLink, initial);
+                var bl = new List<RichTextComponentBase>();
+                RenderBlock(capi, block, bl, body, italic, dropCap, onLink, initial);
+                if (bl.Count > 0) blockLists.Add(bl);
             }
 
-            sections.Add(new RenderedSection(sec.Title ?? "", comps.ToArray()));
+            if (sec.KeepTogether)
+            {
+                var a = new Atom { PageBreakBefore = sec.PageBreakBefore };
+                a.Comps.AddRange(title);
+                foreach (var bl in blockLists) a.Comps.AddRange(bl);
+                if (a.Comps.Count > 0) atoms.Add(a);
+            }
+            else
+            {
+                var first = new Atom { PageBreakBefore = sec.PageBreakBefore };
+                first.Comps.AddRange(title);
+                if (blockLists.Count > 0) first.Comps.AddRange(blockLists[0]);
+                if (first.Comps.Count > 0) atoms.Add(first);
+
+                for (int i = 1; i < blockLists.Count; i++)
+                {
+                    var a = new Atom();
+                    a.Comps.AddRange(blockLists[i]);
+                    atoms.Add(a);
+                }
+            }
         }
-        return sections;
+        return atoms;
+    }
+
+    /// <summary>Greedily packs atoms into page-height columns at the page width.</summary>
+    private static List<RichTextComponentBase[]> Paginate(ICoreClientAPI capi, List<Atom> atoms, double pageWidth, double pageHeight)
+    {
+        double scale = RuntimeEnv.GUIScale <= 0 ? 1 : RuntimeEnv.GUIScale;
+        double availH = pageHeight * scale;   // measured heights come back in scaled pixels
+
+        var pages = new List<RichTextComponentBase[]>();
+        var current = new List<RichTextComponentBase>();
+
+        foreach (var atom in atoms)
+        {
+            if (atom.PageBreakBefore && current.Count > 0)
+            {
+                pages.Add(current.ToArray());
+                current = new List<RichTextComponentBase>();
+            }
+
+            var trial = new List<RichTextComponentBase>(current);
+            trial.AddRange(atom.Comps);
+            double trialH = MeasureHeight(capi, trial.ToArray(), pageWidth);
+
+            if (current.Count > 0 && trialH > availH)
+            {
+                // Won't fit beneath what is already on the page: start a fresh one.
+                pages.Add(current.ToArray());
+                current = new List<RichTextComponentBase>(atom.Comps);
+            }
+            else
+            {
+                current = trial;
+            }
+        }
+
+        if (current.Count > 0) pages.Add(current.ToArray());
+        if (pages.Count == 0) pages.Add(System.Array.Empty<RichTextComponentBase>());
+        return pages;
+    }
+
+    /// <summary>
+    /// Lays a component run out at the page width and returns its height in scaled
+    /// pixels. The throwaway richtext is deliberately not disposed: Dispose would
+    /// dispose the shared child components, and figure and recipe hold native
+    /// surfaces the real render still needs.
+    /// </summary>
+    private static double MeasureHeight(ICoreClientAPI capi, RichTextComponentBase[] comps, double pageWidth)
+    {
+        if (comps.Length == 0) return 0;
+        var bounds = ElementBounds.Fixed(0, 0, pageWidth, 1_000_000).WithEmptyParent();
+        var rt = new GuiElementRichtext(capi, comps, bounds);
+        rt.BeforeCalcBounds();
+        return rt.TotalHeight;
     }
 
     /// <summary>The author's first initial, for the wax seal. From the byline ("... by Venah" -> "V"), else the title.</summary>

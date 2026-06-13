@@ -32,6 +32,7 @@
     {
       "id": "what-a-chapter-holds",
       "title": "What a chapter can hold",
+      "keepTogether": true,
       "blocks": [
         { "type": "paragraph",
           "text": "A chapter is built from blocks. Among them are illustrations and live crafting recipes, both drawn by the book." },
