@@ -15,6 +15,8 @@ Status: v0.1 draft, 2026-06-12. This document is canonical. The published JSON S
 
 The two are unrelated. A guide does not break when the mod's `version` changes. A guide breaks only when the engine drops support for its `schemaVersion`. Set `schemaVersion` once. Revisit it when you adopt a newer format feature, not before.
 
+`schemaVersion` bumps only for a change an older engine cannot read. New optional blocks and fields that an older engine can skip do not force a bump. They degrade gracefully.
+
 ---
 
 ## 2. Discovery and gating
@@ -116,7 +118,7 @@ A block is `{ "type": "...", ...props }`. Any block may carry one common field:
 |--------|-------|------------|
 | `heading` | `text`, `level` (1 to 3) | A section or sub heading. |
 | `paragraph` | `text`, `dropcap?` | Body text. Inline VTML applies. See section 6. |
-| `dropcap` | `letter`, `style?` | An illuminated initial. Or set `dropcap: true` on the first paragraph to apply it there. |
+| `dropcap` | `letter` | An illuminated initial. Or set `dropcap: true` on the first paragraph to apply it there. Decorative styles arrive in v0.2. |
 | `steps` | `items: [text, ...]`, `ordered?` | A step list. Numbered by default, bulleted when `ordered` is false. |
 | `materials` | `items: [{ code, label?, count? }]` | A captioned itemstack grid of clickable slots. |
 | `recipe` | `recipe` or `output` | A native recipe render, reusing the handbook's own component. |
@@ -129,7 +131,9 @@ A block is `{ "type": "...", ...props }`. Any block may carry one common field:
 
 **The `recipe` block.** Supply `recipe` or `output`, never both. `recipe` takes a recipe code and renders that one recipe. `output` takes an item code and renders every recipe that produces it, the way the handbook does. Use `recipe` for one specific recipe, `output` for all of them.
 
-**Callout color.** A callout's color comes from its `variant`, not from `accentColor`. A `warning` stays warning-colored in every chapter, whatever the chapter's accent.
+**The `figure` block.** `image` is a texture path, `domain:textures/<path>.png`, in PNG. The book scales the image to fit the text column and preserves its aspect ratio. `align` `full` spans the column. `left` and `right` float it smaller with text beside it.
+
+**The `callout` block.** Its color comes from its `variant`, not from `accentColor`, so a `warning` stays warning-colored in every chapter, whatever the chapter's accent. `icon` takes the same form as the chapter icon: an itemstack code or a texture path.
 
 ### Deferred to v0.2. Do not work around it.
 
@@ -176,7 +180,7 @@ Progression Framework is never required. A guide that uses quest blocks reads fi
 | `handbook://<page>` | a vanilla handbook page, handed to the game |
 | `https://...` | an external URL, behind a confirm-before-open dialog |
 
-An internal jump pushes onto the book's history. Back returns the reader to where they were.
+Inline `<a href>` accepts these same four forms. An internal jump pushes onto the book's history. Back returns the reader to where they were.
 
 Anchor to a section's `id`, never its `title`. A title is display text, optional and localizable, so it makes a fragile target. An `id` is stable.
 
@@ -239,6 +243,8 @@ To write a literal that begins with `#`, double it. The value `##1 rule of the t
           { "text": "Sight the canyon rim from your stake" },
           { "text": "Set down three bearings in the ledger" }
         ]},
+        { "type": "link", "to": "almanac://chapter/venah:fieldwright#getting-started",
+          "text": "Review Getting Started before you set out." },
         { "type": "link", "to": "almanac://chapter/venah:smithing",
           "text": "See the Smithing chapter for working the flint." }
       ]
