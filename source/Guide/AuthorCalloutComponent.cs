@@ -8,11 +8,11 @@ namespace AlmanacIlluminated;
 /// The "From the Author's Hand" callout: a rubricated manuscript aside.
 /// Brighter vellum interior, a double red border, a wax-seal disc bearing the
 /// author's initial, and a red heading over the italic note. Drawn entirely in
-/// Cairo so it stays one inline richtext component (no stacking engine).
+/// Cairo so it stays one inline richtext component.
 ///
-/// Design values from the design-master spec (2026-06-13) reconciled with the
-/// Figma mockup (rounded corners, seal at left). Numbers are unscaled; they are
-/// wrapped in GuiElement.scaled at draw time.
+/// Every text line is indented past the seal by narrowing the flow path in
+/// CalcBounds (PaddingLeft only indents the first line). Design values from the
+/// design-master spec (2026-06-13) reconciled with the Figma mockup.
 /// </summary>
 public class AuthorCalloutComponent : RichTextComponent
 {
@@ -22,16 +22,14 @@ public class AuthorCalloutComponent : RichTextComponent
 
     private const string HeadingText = "From the Author's Hand:";
 
-    // Geometry (unscaled px)
-    private const double Pad = 11;        // text inset from inner rule
-    private const double Radius = 7;       // corner rounding
+    private const double Pad = 11;
+    private const double Radius = 7;
     private const double OuterStroke = 2;
     private const double InnerStroke = 1;
     private const double RuleGap = 3;
     private const double SealDia = 34;
-    private const double SealClear = 50;   // left clearance reserved for the seal (PaddingLeft)
+    private const double SealClear = 52;   // left column reserved for the seal
 
-    // Colors (RGBA 0..1)
     private static readonly double[] Interior = { 0.97, 0.94, 0.85, 1.0 };
     private static readonly double[] RuleOuter = { 0.72, 0.13, 0.08, 1.0 };
     private static readonly double[] RuleInner = { 0.72, 0.13, 0.08, 0.80 };
@@ -40,14 +38,30 @@ public class AuthorCalloutComponent : RichTextComponent
     private static readonly double[] SealHi = { 0.82, 0.45, 0.38, 0.60 };
 
     public AuthorCalloutComponent(ICoreClientAPI api, string note, CairoFont bodyFont, string initial)
-        : base(api, "\n" + note, bodyFont)   // leading line reserves space for the heading
+        : base(api, "\n" + note, bodyFont)   // leading line reserves the heading row
     {
         letter = initial;
-        PaddingLeft = SealClear;             // first line (heading) clears the seal
         headingFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody)
             .WithWeight(FontWeight.Bold).WithSlant(FontSlant.Italic).WithColor(new[] { 0.62, 0.12, 0.10, 1.0 });
         sealFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifDecorative)
             .WithWeight(FontWeight.Bold).WithFontSize(17f).WithColor(new[] { 0.97, 0.92, 0.82, 1.0 });
+    }
+
+    public override EnumCalcBoundsResult CalcBounds(TextFlowPath[] flowPath, double currentLineHeight, double offsetX, double lineY, out double nextOffsetX)
+    {
+        double clear = GuiElement.scaled(SealClear);
+        double rpad = GuiElement.scaled(Pad);
+
+        var narrowed = new TextFlowPath[flowPath.Length];
+        for (int i = 0; i < flowPath.Length; i++)
+        {
+            var f = flowPath[i];
+            narrowed[i] = new TextFlowPath { X1 = f.X1 + clear, Y1 = f.Y1, X2 = f.X2 - rpad, Y2 = f.Y2 };
+        }
+
+        var sec = GetCurrentFlowPathSection(narrowed, lineY);
+        double startX = sec?.X1 ?? (narrowed.Length > 0 ? narrowed[0].X1 : offsetX);
+        return base.CalcBounds(narrowed, currentLineHeight, startX, lineY, out nextOffsetX);
     }
 
     public override void ComposeElements(Context ctx, ImageSurface surface)
@@ -70,12 +84,11 @@ public class AuthorCalloutComponent : RichTextComponent
         double h = (maxY - minY) + s(Pad) * 2;
         if (h < s(SealDia) + s(Pad) * 2) h = s(SealDia) + s(Pad) * 2;
 
-        // Interior fill
+        ctx.NewPath();
         RoundRect(ctx, x, y, w, h, s(Radius));
         ctx.SetSourceRGBA(Interior[0], Interior[1], Interior[2], Interior[3]);
         ctx.Fill();
 
-        // Double red rule
         ctx.LineWidth = s(OuterStroke);
         RoundRect(ctx, x + s(OuterStroke) / 2, y + s(OuterStroke) / 2, w - s(OuterStroke), h - s(OuterStroke), s(Radius));
         ctx.SetSourceRGBA(RuleOuter[0], RuleOuter[1], RuleOuter[2], RuleOuter[3]);
@@ -90,17 +103,18 @@ public class AuthorCalloutComponent : RichTextComponent
         // Body text (and the empty reserved first line)
         base.ComposeElements(ctx, surface);
 
-        // Heading, on the reserved first line, right of the seal
-        double headBaseline = minY + s(13);
+        // Red heading on the reserved first line, in the text column
         headingFont.SetupContext(ctx);
-        ctx.MoveTo(s(SealClear), headBaseline);
+        ctx.NewPath();
+        ctx.MoveTo(s(SealClear), minY + s(13));
         ctx.ShowText(HeadingText);
 
-        // Wax seal, left, vertically centered on the box
+        // Wax seal in the left column, vertically centered on the box
         double cx = x + s(Pad) + s(SealDia) / 2;
         double cy = y + h / 2;
         double r = s(SealDia) / 2;
 
+        ctx.NewPath();
         ctx.Arc(cx, cy, r, 0, Math.PI * 2);
         ctx.SetSourceRGBA(SealFill[0], SealFill[1], SealFill[2], SealFill[3]);
         ctx.FillPreserve();
@@ -108,14 +122,14 @@ public class AuthorCalloutComponent : RichTextComponent
         ctx.SetSourceRGBA(SealRim[0], SealRim[1], SealRim[2], 1);
         ctx.Stroke();
 
-        // Highlight arc, top-left, catching candlelight
+        ctx.NewPath();
         ctx.Arc(cx, cy, r - s(2), Math.PI * 0.75, Math.PI * 1.25);
         ctx.LineWidth = s(1);
         ctx.SetSourceRGBA(SealHi[0], SealHi[1], SealHi[2], SealHi[3]);
         ctx.Stroke();
 
-        // Initial, centered in the disc
         sealFont.SetupContext(ctx);
+        ctx.NewPath();
         var te = ctx.TextExtents(letter);
         ctx.MoveTo(cx - (te.Width / 2 + te.XBearing), cy - (te.YBearing + te.Height / 2));
         ctx.ShowText(letter);
