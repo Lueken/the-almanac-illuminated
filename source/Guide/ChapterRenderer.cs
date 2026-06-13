@@ -15,12 +15,15 @@ namespace AlmanacIlluminated;
 /// </summary>
 public static class ChapterRenderer
 {
+    // Dark ink, for reading on parchment.
+    private static readonly double[] Ink = { 0.13, 0.09, 0.05, 1 };
+
     public static List<RenderedSection> Render(ICoreClientAPI capi, GuidePack pack, Action<LinkTextComponent>? onLink)
     {
-        var heading = CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold);
-        var body = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody);
-        var italic = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithSlant(Cairo.FontSlant.Italic);
-        var dropCap = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifDecorative).WithFontSize(34f).WithWeight(Cairo.FontWeight.Bold);
+        var heading = CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink);
+        var body = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithColor(Ink);
+        var italic = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithSlant(Cairo.FontSlant.Italic).WithColor(Ink);
+        var dropCap = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifDecorative).WithFontSize(34f).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink);
 
         var sections = new List<RenderedSection>();
         foreach (var sec in pack.Sections)
@@ -55,7 +58,7 @@ public static class ChapterRenderer
         {
             case "heading":
                 comps.Add(new RichTextComponent(capi, (block.Str("text") ?? "") + "\n",
-                    CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold)));
+                    CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink)));
                 break;
 
             case "paragraph":

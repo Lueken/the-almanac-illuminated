@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using Cairo;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.API.Config;
 
 namespace AlmanacIlluminated;
 
@@ -15,9 +17,8 @@ public class GuiDialogIlluminatedBook : GuiDialog
 {
     public const string HotkeyCode = "almanacilluminatedbook";
 
-    private const double PageWidth = 420;
-    private const double PageHeight = 580;
-    private const double GutterWidth = 40;
+    // Fraction of the screen the open book fills.
+    private const double ScreenFraction = 0.84;
 
     private readonly GuidePack? pack;
     private List<RenderedSection>? sections;
@@ -63,45 +64,73 @@ public class GuiDialogIlluminatedBook : GuiDialog
         int leftIdx = spreadIndex * 2;
         int rightIdx = leftIdx + 1;
 
-        ElementBounds dialogBounds = ElementStdBounds.AutosizedMainDialog.WithAlignment(EnumDialogArea.CenterMiddle);
+        // Size the book to a fraction of the screen. GUI bounds are unscaled
+        // units that get multiplied by GUIScale at render, so divide it out.
+        double scale = RuntimeEnv.GUIScale <= 0 ? 1 : RuntimeEnv.GUIScale;
+        double targetW = capi.Render.FrameWidth / scale * ScreenFraction;
+        double targetH = capi.Render.FrameHeight / scale * ScreenFraction;
 
-        ElementBounds bgBounds = ElementBounds.Fill.WithFixedPadding(GuiStyle.ElementToDialogPadding);
-        bgBounds.BothSizing = ElementSizing.FitToChildren;
+        const double pad = 22, gutter = 34, titleBar = 30, btnRow = 34, inset = 16;
+        double pageH = System.Math.Max(140, targetH - titleBar - btnRow - pad * 2);
+        double pageW = System.Math.Max(180, (targetW - gutter - pad * 2) / 2);
+        double pageY = titleBar + pad;
 
-        ElementBounds leftPage = ElementBounds.Fixed(0, 35, PageWidth, PageHeight);
-        ElementBounds rightPage = ElementBounds.Fixed(PageWidth + GutterWidth, 35, PageWidth, PageHeight);
+        ElementBounds dialogBounds = ElementBounds.Fixed(0, 0, targetW, targetH).WithAlignment(EnumDialogArea.CenterMiddle);
+        ElementBounds bgBounds = ElementBounds.Fill;
 
-        ElementBounds prevBtn = ElementBounds.Fixed(0, 45 + PageHeight, 110, 28);
-        ElementBounds pageLabel = ElementBounds.Fixed(PageWidth - 60, 50 + PageHeight, 160, 28);
-        ElementBounds nextBtn = ElementBounds.Fixed(PageWidth + GutterWidth + PageWidth - 110, 45 + PageHeight, 110, 28);
+        ElementBounds leftPanel = ElementBounds.Fixed(pad, pageY, pageW, pageH);
+        ElementBounds rightPanel = ElementBounds.Fixed(pad + pageW + gutter, pageY, pageW, pageH);
+        ElementBounds leftText = ElementBounds.Fixed(pad + inset, pageY + inset, pageW - inset * 2, pageH - inset * 2);
+        ElementBounds rightText = ElementBounds.Fixed(pad + pageW + gutter + inset, pageY + inset, pageW - inset * 2, pageH - inset * 2);
 
-        bgBounds.WithChildren(leftPage, rightPage, prevBtn, pageLabel, nextBtn);
+        double btnY = pageY + pageH + 6;
+        ElementBounds prevBtn = ElementBounds.Fixed(pad, btnY, 110, 28);
+        ElementBounds pageLabel = ElementBounds.Fixed(targetW / 2 - 80, btnY + 4, 160, 28);
+        ElementBounds nextBtn = ElementBounds.Fixed(targetW - pad - 110, btnY, 110, 28);
+
+        bgBounds.WithChildren(leftPanel, rightPanel, leftText, rightText, prevBtn, pageLabel, nextBtn);
 
         int maxSpread = (sections.Count - 1) / 2;
 
         var composer = capi.Gui
             .CreateCompo("illuminatedbook", dialogBounds)
-            .AddShadedDialogBG(bgBounds)
+            .AddStaticCustomDraw(bgBounds, DrawBoard)
             .AddDialogTitleBar(pack?.Title ?? "The Almanac", OnTitleBarClose)
-            .AddRichtext(sections[leftIdx].Components, leftPage, "leftpage");
+            .AddStaticCustomDraw(leftPanel, DrawPage)
+            .AddStaticCustomDraw(rightPanel, DrawPage)
+            .AddRichtext(sections[leftIdx].Components, leftText, "leftpage");
 
         if (rightIdx < sections.Count)
         {
-            composer.AddRichtext(sections[rightIdx].Components, rightPage, "rightpage");
+            composer.AddRichtext(sections[rightIdx].Components, rightText, "rightpage");
         }
 
         composer
             .AddSmallButton("◀ Previous", OnPrevPage, prevBtn)
-            .AddRichtext($"<font align=\"center\">Spread {spreadIndex + 1} / {maxSpread + 1}</font>",
+            .AddRichtext($"<font align=\"center\" color=\"#3a2a18\">Spread {spreadIndex + 1} / {maxSpread + 1}</font>",
                 CairoFont.WhiteSmallText(), pageLabel, "pagelabel")
             .AddSmallButton("Next ▶", OnNextPage, nextBtn);
 
         SingleComposer = composer.Compose();
 
-        // The number Phase 0 lives or dies on. Target: < ~30 ms per spread on iGPU.
         IlluminatedLogger.Info(capi, "book",
-            $"Spread {spreadIndex + 1}/{maxSpread + 1} composed in {sw.ElapsedMilliseconds} ms " +
-            $"({sections[leftIdx].Components.Length}+{(rightIdx < sections.Count ? sections[rightIdx].Components.Length : 0)} components)");
+            $"Spread {spreadIndex + 1}/{maxSpread + 1} composed in {sw.ElapsedMilliseconds} ms");
+    }
+
+    /// <summary>Dark leather book board behind both pages.</summary>
+    private void DrawBoard(Context ctx, ImageSurface surface, ElementBounds b)
+    {
+        ctx.SetSourceRGBA(0.17, 0.11, 0.07, 1);
+        ctx.Rectangle(b.drawX, b.drawY, b.OuterWidth, b.OuterHeight);
+        ctx.Fill();
+    }
+
+    /// <summary>A cream parchment page panel.</summary>
+    private void DrawPage(Context ctx, ImageSurface surface, ElementBounds b)
+    {
+        ctx.SetSourceRGBA(0.93, 0.88, 0.76, 1);
+        ctx.Rectangle(b.drawX, b.drawY, b.OuterWidth, b.OuterHeight);
+        ctx.Fill();
     }
 
     private bool OnPrevPage()
