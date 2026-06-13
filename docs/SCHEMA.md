@@ -236,6 +236,5 @@ To translate, ship `assets/<domain>/lang/<locale>.json` as usual. A single guide
 ## Planned for v0.2 and later
 
 - The `table` block, committed and deferred from v0.1.
-- Multi-column layouts beyond the two-page spread.
-- Author-supplied ornament art per chapter.
+- A live in-game preview that reloads a guide while you edit it.
 - A web editor that builds and previews a guide pack, generated from the published JSON Schema and hosted free.
