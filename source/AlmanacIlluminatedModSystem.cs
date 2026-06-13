@@ -19,6 +19,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
     {
         capi = api;
 
+        // Register bundled fonts before any GUI can request them.
+        FontRegistry.RegisterAll(api);
+
         // Alt+J is the Almanac's keybind. The legacy almanaccodexilluminated
         // dialog also binds it — they should not be loaded together; warn if so.
         if (api.ModLoader.IsModEnabled("almanaccodexilluminated"))

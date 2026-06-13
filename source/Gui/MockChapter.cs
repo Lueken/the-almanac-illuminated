@@ -28,9 +28,15 @@ public static class MockChapter
         }
         IlluminatedLogger.Debug(capi, "mockchapter", $"Resolved {stackPool.Count} itemstacks for the spike pool");
 
-        var headingFont = CairoFont.WhiteSmallishText().WithWeight(Cairo.FontWeight.Bold);
-        var bodyFont = CairoFont.WhiteSmallText();
-        var checklistFont = CairoFont.WhiteSmallText().WithSlant(Cairo.FontSlant.Italic);
+        // Role split (locked 2026-06-12): manuscript serifs carry reading, the
+        // custom fonts accent. Lora=body/ledger, Almendra/Eyesome=drop-cap accent,
+        // Odibee Sans=small-caps section headers, Eyesome Script=byline,
+        // Josefin Sans=UI chrome (set on the dialog, not here).
+        var headingFont = CairoFont.WhiteSmallishText().WithFont(FontRegistry.DisplaySans);          // section header, uppercased below
+        var bylineFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.Script).WithFontSize(20f); // Eyesome Script accent
+        var dropCapFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.Script).WithFontSize(40f); // flowing script drop-cap
+        var bodyFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody);
+        var checklistFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithSlant(Cairo.FontSlant.Italic);
 
         string[] loremTopics =
         {
@@ -43,13 +49,20 @@ public static class MockChapter
         var sections = new List<Section>();
         for (int s = 0; s < sectionCount; s++)
         {
+            // Drop-cap: oversized decorative first letter floated left, body text wraps.
+            const string body =
+                "our vanilla habit no longer works here. The pack replaces this mechanic wholesale, " +
+                "and the first time you collide with it you will assume something is broken. It is not. " +
+                "Follow the steps below and the new flow becomes second nature within a session.\n";
             var comps = new List<RichTextComponentBase>
             {
-                new RichTextComponent(capi, loremTopics[s % loremTopics.Length] + "\n", headingFont),
-                new RichTextComponent(capi,
-                    "Your vanilla habit no longer works here. The pack replaces this mechanic wholesale, " +
-                    "and the first time you collide with it you will assume something is broken. It is not. " +
-                    "Follow the steps below and the new flow becomes second nature within a session.\n", bodyFont),
+                // Section header in Odibee Sans, uppercased (faux small-caps — toy API has no real ones)
+                new RichTextComponent(capi, loremTopics[s % loremTopics.Length].ToUpperInvariant() + "\n", headingFont),
+                // Eyesome Script byline accent
+                new RichTextComponent(capi, "set down by Venah\n", bylineFont),
+                // Flowing script drop-cap, body wraps around it
+                new RichTextComponent(capi, "Y", dropCapFont) { Float = EnumFloat.Left, PaddingRight = 4 },
+                new RichTextComponent(capi, body, bodyFont),
             };
 
             // A row of real itemstacks — clickable 3D slots inline in the text flow
