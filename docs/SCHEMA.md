@@ -178,9 +178,9 @@ All four forms stay. The book is open, not a walled garden. The base game does t
 Any string field accepts a literal or a lang key. This covers `title`, `subtitle`, `byline`, block `text`, captions, and step items.
 
 - A literal string, for example `"Getting Started"`.
-- A lang key prefixed with `#`, for example `"#almanac:fieldwright-getting-started"`, resolved through the game's lang system.
+- A lang key prefixed with `#`, for example `"#fieldwright:getting-started"`, resolved through the game's lang system.
 
-To translate, ship `assets/<domain>/lang/<locale>.json` as usual. A single guide may mix literals and keys.
+The key's domain is the domain you ship the translation under, not the chapter `id` namespace. To translate, ship `assets/<domain>/lang/<locale>.json` as usual. A single guide may mix literals and keys.
 
 ---
 
