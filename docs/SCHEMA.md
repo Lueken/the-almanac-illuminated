@@ -33,6 +33,8 @@ Any mod can ship guides. A mod ships guides for itself. A pack author ships guid
 
 Server-side mods are covered too. At join, the server sends its guide manifests to the client (Phase 4, server bridge). Chapters then exist for content the client does not carry on its own.
 
+Two guides may gate to the same modid. A mod author documents their own mod, and a pack author documents it too. Guides are keyed by `id`, not by `gate`, so these are two separate chapters. Both show, sorted by title under that mod's name. A real clash is two guides that share one `id`. The engine keeps the one loaded last and logs a warning. Replacing a mod's own guide wholesale is an override feature, planned for v0.2.
+
 ---
 
 ## 3. The chapter manifest
@@ -62,18 +64,19 @@ The top level of every guide file.
 | `subtitle` | no | One line under the title. |
 | `byline` | no | Attribution line. |
 | `icon` | no | An itemstack code or texture path for the chapter's index icon. |
-| `accentColor` | no | Hex. The chapter's identity color, used on drop-caps, rules, and callout tint. Defaults to a parchment neutral. |
+| `accentColor` | no | Hex. The chapter's identity color, used on drop-caps and rules. Defaults to a parchment neutral. |
+| `order` | no | Gate-less chapters only. Integer sort position among front matter, lower first. Ties break by `id`. Ignored on gated chapters. |
 | `sections` | yes | The ordered content. See section 4. |
 
 Identity is bounded. A chapter sets its `icon`, its `accentColor`, and its content. It does not set its placement, its layout, or its fonts. A chapter carries its own identity. The book keeps its own.
 
-### Placement is the engine's call, not the author's
+### Placement is the engine's call, with one exception
 
-A chapter does not choose where it sits. The book orders chapters alphabetically by the display name of the mod each one documents. A mod that ships more than one chapter sorts its own chapters by title beneath that name. The index letter comes from the same name.
+A gated chapter does not choose where it sits. The book orders gated chapters alphabetically by the display name of the mod each one documents. A mod that ships more than one chapter sorts its own chapters by title beneath that name. The index letter comes from the same name. No gated chapter can set its placement, so none can jump ahead of another.
 
-A gate-less chapter has no mod to sort under. The engine places it as front matter, ahead of the alphabetical run, and the pack owner curates that order.
+Gate-less chapters are different. They are front matter, and they belong to the pack rather than to a competing mod, so the pack owner may order them with the `order` field. Front matter sorts by `order`, then by `id`, and sits ahead of the alphabetical run. `order` plus `id` is a total ordering, so front matter from two installed packs interleaves predictably instead of colliding.
 
-This is deliberate. Placement is not a field an author can set, so no author can promote a chapter ahead of another. The order stays neutral and predictable, and it stays the platform's call.
+This split is deliberate. The lever exists only where one owner controls the content. Where chapters from different authors compete under a mod name, placement stays the platform's call.
 
 ---
 
@@ -85,6 +88,7 @@ Two hints return control where it matters.
 
 ```json
 {
+  "id": "getting-started",
   "title": "Getting Started",
   "pageBreakBefore": false,
   "keepTogether": true,
@@ -92,6 +96,7 @@ Two hints return control where it matters.
 }
 ```
 
+- `id` is optional. It is a stable anchor for internal links and is never shown to the reader. Set it when you want links to point at this section. Unlike `title`, it must not change once links rely on it. See section 8.
 - `keepTogether: true`. The engine does not split the section across a page boundary. A section that does not fit moves whole to the next page. Use it for a recipe and its caption, a callout, or a short step list.
 - `pageBreakBefore: true`. The section starts a new page, the left page of the next spread. Use it to open a major topic.
 
@@ -121,6 +126,10 @@ A block is `{ "type": "...", ...props }`. Any block may carry one common field:
 | `ledger` | `entries: [text, ...]` | A dated journal block in italic. |
 | `divider` | `ornament?` | A horizontal ornamental rule in the accent color. |
 | `link` | `to`, `text` | A clickable cross-reference. See section 8. |
+
+**The `recipe` block.** Supply `recipe` or `output`, never both. `recipe` takes a recipe code and renders that one recipe. `output` takes an item code and renders every recipe that produces it, the way the handbook does. Use `recipe` for one specific recipe, `output` for all of them.
+
+**Callout color.** A callout's color comes from its `variant`, not from `accentColor`. A `warning` stays warning-colored in every chapter, whatever the chapter's accent.
 
 ### Deferred to v0.2. Do not work around it.
 
@@ -163,11 +172,15 @@ Progression Framework is never required. A guide that uses quest blocks reads fi
 | Form | Jumps to |
 |------|----------|
 | `almanac://chapter/<id>` | another chapter by `id` |
-| `almanac://chapter/<id>#<sectionTitle>` | a section inside a chapter |
+| `almanac://chapter/<id>#<sectionId>` | a section inside a chapter, by its `id` |
 | `handbook://<page>` | a vanilla handbook page, handed to the game |
 | `https://...` | an external URL, behind a confirm-before-open dialog |
 
 An internal jump pushes onto the book's history. Back returns the reader to where they were.
+
+Anchor to a section's `id`, never its `title`. A title is display text, optional and localizable, so it makes a fragile target. An `id` is stable.
+
+A link can point at a chapter that is hidden because its `gate` mod is not loaded. The engine cannot tell that case apart from a link to an `id` that was never defined, because a gated-off chapter never loads and its `id` is simply unknown. Both render the same way: plain, inert text, so the sentence around the link still reads. Any click or hover feedback says `unavailable`, never `not installed`, because the engine cannot know which case it is.
 
 All four forms stay. The book is open, not a walled garden. The base game does the same in its handbook and its settings menu, which is where this link-handoff pattern is already proven.
 
@@ -181,6 +194,8 @@ Any string field accepts a literal or a lang key. This covers `title`, `subtitle
 - A lang key prefixed with `#`, for example `"#fieldwright:getting-started"`, resolved through the game's lang system.
 
 The key's domain is the domain you ship the translation under, not the chapter `id` namespace. To translate, ship `assets/<domain>/lang/<locale>.json` as usual. A single guide may mix literals and keys.
+
+To write a literal that begins with `#`, double it. The value `##1 rule of the trade` renders as `#1 rule of the trade`. The escape applies only to a leading `#`.
 
 ---
 
@@ -198,6 +213,7 @@ The key's domain is the domain you ship the translation under, not the chapter `
   "accentColor": "#7a5a2e",
   "sections": [
     {
+      "id": "getting-started",
       "title": "Getting Started",
       "keepTogether": true,
       "blocks": [
