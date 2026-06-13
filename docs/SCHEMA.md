@@ -143,6 +143,8 @@ Block structure is JSON. Inline runs are VTML. Anyone who has edited a handbook 
 
 ## 7. Quests and Progression Framework
 
+Quest tracking is a planned feature. The static checklist comes first. Live tracking against Progression Framework comes with the later integration work. The concept is already proven: Fieldwright's build guide tracks checklist completion in a shipped mod.
+
 A `quest` block degrades by capability.
 
 - With Progression Framework loaded and `questId` set: checkboxes track live state, the active objective shows the tracked pin, and completed items strike through. The chapter header may show progress pips.
