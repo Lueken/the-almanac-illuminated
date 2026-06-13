@@ -165,6 +165,8 @@ Never a hard dependency. A guide with quest blocks is fully readable without PF 
 
 Internal jumps push onto the book's nav history so the back action returns the reader.
 
+All four forms are kept — the book is open, not a walled garden. This mirrors vanilla precedent: the handbook and settings menu already use the same in-engine link-handoff pattern, so the renderer support is free and proven.
+
 ---
 
 ## 9. Localization
