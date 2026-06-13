@@ -47,10 +47,8 @@ The top level of every guide file.
   "title": "Fieldwright",
   "subtitle": "A practical guide to the surveyor's art",
   "byline": "set down by Venah",
-  "indexKey": "F",
   "icon": "fieldwright:item/surveyors-rod",
   "accentColor": "#7a5a2e",
-  "order": 100,
   "sections": [ ... ]
 }
 ```
@@ -63,13 +61,19 @@ The top level of every guide file.
 | `title` | yes | The chapter title. A literal or a `#langkey`. |
 | `subtitle` | no | One line under the title. |
 | `byline` | no | Attribution line. |
-| `indexKey` | no | The A to Z index letter. Defaults to the first letter of `title`. |
 | `icon` | no | An itemstack code or texture path for the chapter's index icon. |
 | `accentColor` | no | Hex. The chapter's identity color, used on drop-caps, rules, and callout tint. Defaults to a parchment neutral. |
-| `order` | no | Sort position inside the letter group. Lower sorts first. Defaults to 1000. |
 | `sections` | yes | The ordered content. See section 4. |
 
-Identity is bounded. A chapter sets its `icon`, `accentColor`, `indexKey`, `order`, and its content. It does not set layout or fonts. A chapter carries its own identity. The book keeps its own.
+Identity is bounded. A chapter sets its `icon`, its `accentColor`, and its content. It does not set its placement, its layout, or its fonts. A chapter carries its own identity. The book keeps its own.
+
+### Placement is the engine's call, not the author's
+
+A chapter does not choose where it sits. The book orders chapters alphabetically by the display name of the mod each one documents. A mod that ships more than one chapter sorts its own chapters by title beneath that name. The index letter comes from the same name.
+
+A gate-less chapter has no mod to sort under. The engine places it as front matter, ahead of the alphabetical run, and the pack owner curates that order.
+
+This is deliberate. Placement is not a field an author can set, so no author can promote a chapter ahead of another. The order stays neutral and predictable, and it stays the platform's call.
 
 ---
 
@@ -188,7 +192,6 @@ To translate, ship `assets/<domain>/lang/<locale>.json` as usual. A single guide
   "title": "Fieldwright",
   "subtitle": "A practical guide to the surveyor's art",
   "byline": "set down by Venah",
-  "indexKey": "F",
   "icon": "fieldwright:item/surveyors-rod",
   "accentColor": "#7a5a2e",
   "sections": [
