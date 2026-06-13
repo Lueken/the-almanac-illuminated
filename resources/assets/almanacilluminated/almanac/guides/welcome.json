@@ -24,7 +24,11 @@
       "title": "For mod authors",
       "blocks": [
         { "type": "paragraph",
-          "text": "Write a chapter as plain JSON and ship it in your own mod. The format is documented in the repository. The book owns layout, fonts, and gating. You bring the content." }
+          "text": "Write a chapter as plain JSON and ship it in your own mod. The format is documented in the repository. The book owns layout, fonts, and gating. You bring the content." },
+        { "type": "callout", "variant": "author",
+          "text": "Keep chapters short. A reader opens the book mid-task and wants the one thing they came for, not an essay." },
+        { "type": "callout", "variant": "warning",
+          "text": "A chapter renders only when its gate mod is loaded. Test with the mod present before you ship." }
       ]
     }
   ]

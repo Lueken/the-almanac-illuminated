@@ -103,9 +103,13 @@ public static class ChapterRenderer
             }
 
             case "callout":
-                comps.Add(new RichTextComponent(capi, "❝ ", italic));
-                comps.AddRange(VtmlUtil.Richtextify(capi, (block.Str("text") ?? "") + "\n", italic, onLink));
+            {
+                var (box, bar) = CalloutColors(block.Str("variant") ?? "author");
+                comps.Add(new RichTextComponent(capi, "\n", body));
+                comps.Add(new CalloutComponent(capi, (block.Str("text") ?? "") + "\n", italic, box, bar));
+                comps.Add(new RichTextComponent(capi, "\n", body));
                 break;
+            }
 
             case "quest":
                 foreach (var it in Arr(block, "items"))
@@ -149,6 +153,15 @@ public static class ChapterRenderer
                 break;
         }
     }
+
+    /// <summary>Box fill and left-bar colors per callout variant. Variant owns the color, not the chapter accent.</summary>
+    private static (double[] box, double[] bar) CalloutColors(string variant) => variant switch
+    {
+        "tip"     => (new[] { 0.80, 0.86, 0.70, 1.0 }, new[] { 0.34, 0.50, 0.20, 1.0 }),
+        "warning" => (new[] { 0.92, 0.80, 0.72, 1.0 }, new[] { 0.70, 0.28, 0.14, 1.0 }),
+        "lore"    => (new[] { 0.80, 0.82, 0.90, 1.0 }, new[] { 0.30, 0.34, 0.55, 1.0 }),
+        _         => (new[] { 0.87, 0.79, 0.61, 1.0 }, new[] { 0.48, 0.36, 0.18, 1.0 }), // author
+    };
 
     private static JArray Arr(GuideBlock block, string key)
         => block.Props.TryGetValue(key, out var t) && t is JArray a ? a : new JArray();
