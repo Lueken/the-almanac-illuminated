@@ -1,48 +1,48 @@
-# The Almanac: Illuminated — Guide-Pack Schema v0.1
+# The Almanac: Illuminated. Guide-Pack Schema v0.1
 
-The format mod authors and pack authors write to add a chapter to The Almanac. A guide pack is plain JSON — no code. Chapters appear in-game only when the mod they document is loaded.
+This is the format you write to add a chapter to The Almanac. A guide pack is plain JSON. No code. A chapter appears in game only when the mod it documents is loaded.
 
-**Status: v0.1 draft (2026-06-12).** This is the canonical spec. The published JSON Schema (for editor autocomplete/validation) tracks this document.
-
----
-
-## 1. Two version numbers — do not conflate them
-
-| Number | Lives in | Means |
-|--------|----------|-------|
-| `schemaVersion` | the guide pack JSON | which **format version** the author wrote against. The engine declares which schema versions it supports; a guide stays valid as long as its `schemaVersion` is supported. |
-| mod version | the mod's `modinfo.json` | the mod's own release version. **Unrelated** to guide compatibility. Moves on its own schedule. |
-
-A guide does not break when its mod bumps version. A guide breaks only if the engine drops support for its `schemaVersion`. Authors set `schemaVersion` once and forget it until they adopt new format features.
+Status: v0.1 draft, 2026-06-12. This document is canonical. The published JSON Schema follows it, never the reverse.
 
 ---
 
-## 2. Discovery & gating
+## 1. Two version numbers. Keep them apart.
 
-Illuminated scans **every loaded mod** for guide files at:
+| Number | Lives in | Declares |
+|--------|----------|----------|
+| `schemaVersion` | the guide pack | which format version the author wrote against |
+| mod version | `modinfo.json` | the mod's own release version |
+
+The two are unrelated. A guide does not break when its mod changes version. A guide breaks only when the engine drops support for its `schemaVersion`. Set `schemaVersion` once. Revisit it when you adopt a newer format feature, not before.
+
+---
+
+## 2. Discovery and gating
+
+The engine scans every loaded mod for guide files at one path:
 
 ```
 assets/<anydomain>/almanac/guides/*.json
 ```
 
-Any mod can ship guides — for itself, or (pack authors) documenting third-party mods. Each guide declares a `gate`: the modid that must be loaded for the chapter to appear.
+Any mod can ship guides. A mod ships guides for itself. A pack author ships guides that document other people's mods. Each guide names a `gate`: the modid that must be present for the chapter to appear.
 
-- `gate` present + mod loaded → chapter shows.
-- `gate` present + mod absent → chapter silently hidden.
-- `gate` omitted → always shows (use for the pack's own front-matter / "world differences" chapters).
+- `gate` set, mod loaded: the chapter shows.
+- `gate` set, mod absent: the chapter stays hidden, with no error.
+- `gate` omitted: the chapter always shows. Use this for front matter and for "how this world differs" chapters that belong to no single mod.
 
-Server-loaded mods: the server pushes guide manifests for its mods to the client at join (Phase 4 server bridge), so chapters exist for server-only content.
+Server-side mods are covered too. At join, the server sends its guide manifests to the client (Phase 4, server bridge). Chapters then exist for content the client does not carry on its own.
 
 ---
 
-## 3. Chapter manifest
+## 3. The chapter manifest
 
-Top level of each guide JSON.
+The top level of every guide file.
 
 ```json
 {
   "schemaVersion": 1,
-  "id": "fieldwright",
+  "id": "venah:fieldwright",
   "gate": "fieldwright",
   "title": "Fieldwright",
   "subtitle": "A practical guide to the surveyor's art",
@@ -55,132 +55,130 @@ Top level of each guide JSON.
 }
 ```
 
-| Field | Req | Notes |
-|-------|-----|-------|
-| `schemaVersion` | yes | integer. Format version this guide targets. |
-| `id` | yes | unique chapter id (namespace by author to avoid clashes, e.g. `venah:fieldwright`). Target of internal `link`s. |
-| `gate` | no | modid required for visibility. Omit = always visible. |
-| `title` | yes | chapter title. Literal or `#langkey`. |
-| `subtitle` | no | one-line descriptor. |
-| `byline` | no | attribution line. |
-| `indexKey` | no | the A–Z index letter/glyph. Defaults to first letter of `title`. |
-| `icon` | no | itemstack code or texture path for the chapter's index icon. |
-| `accentColor` | no | hex. Chapter identity color (drop-caps, rules, callout tint). Defaults to a parchment-neutral. |
-| `order` | no | sort within the letter group. Lower = earlier. Default 1000. |
-| `sections` | yes | ordered list of sections (see §4). |
+| Field | Required | Rule |
+|-------|----------|------|
+| `schemaVersion` | yes | Integer. The format version this guide targets. |
+| `id` | yes | Unique chapter id. Namespace it with your author domain to avoid collisions. Internal links resolve to it. |
+| `gate` | no | The modid required for visibility. Omit to always show. |
+| `title` | yes | The chapter title. A literal or a `#langkey`. |
+| `subtitle` | no | One line under the title. |
+| `byline` | no | Attribution line. |
+| `indexKey` | no | The A to Z index letter. Defaults to the first letter of `title`. |
+| `icon` | no | An itemstack code or texture path for the chapter's index icon. |
+| `accentColor` | no | Hex. The chapter's identity color, used on drop-caps, rules, and callout tint. Defaults to a parchment neutral. |
+| `order` | no | Sort position inside the letter group. Lower sorts first. Defaults to 1000. |
+| `sections` | yes | The ordered content. See section 4. |
 
-**Bounded identity:** a chapter customizes `icon`, `accentColor`, `indexKey`, ordering, and its content — never raw layout or fonts. Your chapter looks like *yours*; the book still looks like the Almanac.
+Identity is bounded. A chapter sets its `icon`, `accentColor`, `indexKey`, `order`, and its content. It does not set layout or fonts. A chapter carries its own identity. The book keeps its own.
 
 ---
 
-## 4. Sections & the hybrid page model
+## 4. Sections and the page model
 
-Authors write a stream of **sections**, each a titled group of blocks. The engine **flows** sections across the two-page spread to fill pages — authors do not hand-place pages. Two hints keep control where it matters:
+An author writes a stream of sections. A section is a titled group of blocks. The engine flows sections across the two-page spread and fills pages on its own. An author does not place pages by hand.
+
+Two hints return control where it matters.
 
 ```json
 {
-  "sections": [
-    {
-      "title": "Getting Started",
-      "pageBreakBefore": false,
-      "keepTogether": true,
-      "blocks": [ ... ]
-    }
-  ]
+  "title": "Getting Started",
+  "pageBreakBefore": false,
+  "keepTogether": true,
+  "blocks": [ ... ]
 }
 ```
 
-- `keepTogether: true` — the engine will not split this section across a page boundary (move it whole to the next page if it doesn't fit). Use for a recipe + its caption, a callout, a tight step list.
-- `pageBreakBefore: true` — start this section on a fresh page (left page of the next spread). Use to open a major topic cleanly.
+- `keepTogether: true`. The engine does not split the section across a page boundary. A section that does not fit moves whole to the next page. Use it for a recipe and its caption, a callout, or a short step list.
+- `pageBreakBefore: true`. The section starts a new page, the left page of the next spread. Use it to open a major topic.
 
-This is the **hybrid** model: robust auto-flow (never overflows or breaks) with opt-in art-direction (`pageBreakBefore` + `keepTogether` approach the mockup's balance). `title` is optional — omit for a continuation section.
-
----
-
-## 5. Blocks (the content vocabulary)
-
-Each block is `{ "type": "...", ...props }`. Every block may carry:
-
-- `requires`: `["modid", ...]` — **per-block gating**. Block renders only if all listed mods are loaded. (A chapter can show a butchering recipe only when butchering is present.)
-
-### v0.1 block types
-
-| `type` | Props | Renders |
-|--------|-------|---------|
-| `heading` | `text`, `level` (1–3) | section/sub heading (Almendra) |
-| `paragraph` | `text` | body text; **inline VTML supported** (§6) |
-| `dropcap` | `letter`, `style?` | illuminated initial; or set `dropcap: true` on the first `paragraph` to auto-apply |
-| `steps` | `items: [text, ...]`, `ordered?` (default true) | numbered/bulleted step list |
-| `materials` | `items: [{ code, label?, count? }]` | captioned itemstack grid (clickable 3D slots) |
-| `recipe` | `recipe` (grid recipe code) **or** `output` (itemstack code) | native VS recipe render, reusing the handbook component |
-| `callout` | `variant` (`author`\|`tip`\|`warning`\|`lore`), `text`, `icon?` | bordered/tinted aside — the "From the Author's Hand" box |
-| `quest` | `questId?`, `items: [{ text, done? }]` | checklist; with PF + `questId`, checkboxes reflect live state + show the tracked pin; without PF, static (§7) |
-| `figure` | `image`, `caption?`, `align?` (`left`\|`right`\|`full`) | embedded illustration with optional margin caption |
-| `ledger` | `entries: [text, ...]` | dated italic journal block (Lora italic) |
-| `divider` | `ornament?` | horizontal ornamental rule (accent-colored) |
-| `link` | `to`, `text` | clickable cross-reference (§8) |
-
-### Deferred to v0.2 — do not hack around it
-
-- **`table`** — `type: "table"` for stat grids (tool tiers, fuel burn times, temperatures). **Explicitly deferred.** VTML inline formatting cannot lay out a real grid, and `steps`/`materials` must **not** be abused to fake tables. Authors needing tables in v0.1 should wait for v0.2; the engine will warn (not error) if it encounters a `table` block under v0.1 so early adopters degrade gracefully.
+This is the hybrid model. Auto-flow handles the common case and never overflows. The two hints buy back the control an art-directed page needs. `title` is optional. Omit it for a continuation section.
 
 ---
 
-## 6. Inline formatting — reuse VS VTML (free)
+## 5. Blocks
 
-Inside any `text` field, authors use Vintage Story's native VTML, parsed by the engine's existing `VtmlUtil` — we build nothing:
+A block is `{ "type": "...", ...props }`. Any block may carry one common field:
+
+- `requires`: `["modid", ...]`. Per-block gating. The block renders only when every listed mod is loaded. A chapter can show a butchering recipe and hide it when butchering is absent.
+
+### Block types in v0.1
+
+| `type` | Props | Renders as |
+|--------|-------|------------|
+| `heading` | `text`, `level` (1 to 3) | A section or sub heading. |
+| `paragraph` | `text`, `dropcap?` | Body text. Inline VTML applies. See section 6. |
+| `dropcap` | `letter`, `style?` | An illuminated initial. Or set `dropcap: true` on the first paragraph to apply it there. |
+| `steps` | `items: [text, ...]`, `ordered?` | A step list. Numbered by default, bulleted when `ordered` is false. |
+| `materials` | `items: [{ code, label?, count? }]` | A captioned itemstack grid of clickable slots. |
+| `recipe` | `recipe` or `output` | A native recipe render, reusing the handbook's own component. |
+| `callout` | `variant` (`author`, `tip`, `warning`, `lore`), `text`, `icon?` | A bordered, tinted aside. This is the author's-note box. |
+| `quest` | `questId?`, `items: [{ text, done? }]` | A checklist. See section 7. |
+| `figure` | `image`, `caption?`, `align?` (`left`, `right`, `full`) | An embedded illustration with an optional margin caption. |
+| `ledger` | `entries: [text, ...]` | A dated journal block in italic. |
+| `divider` | `ornament?` | A horizontal ornamental rule in the accent color. |
+| `link` | `to`, `text` | A clickable cross-reference. See section 8. |
+
+### Deferred to v0.2. Do not work around it.
+
+`table`, type `"table"`, for stat grids: tool tiers, fuel burn times, temperatures. It is deferred on purpose. VTML does not lay out a real grid, and `steps` and `materials` must not be bent into fake tables. If you need a table in v0.1, wait for v0.2. The engine warns on a `table` block under v0.1 and skips it. It does not error, so an early guide degrades cleanly.
+
+---
+
+## 6. Inline formatting reuses VTML
+
+Inside any `text` field, write Vintage Story's native VTML. The engine parses it with the game's own `VtmlUtil`. We add nothing.
 
 - `<strong>bold</strong>`, `<i>italic</i>`
-- `<a href="...">link</a>` (see §8 for internal targets)
+- `<a href="...">link</a>`. See section 8 for internal targets.
 - `<icon name="..."/>`
-- `<itemstack code="game:ingot-iron"/>` — inline clickable 3D item (proven in the Phase 0 spike)
+- `<itemstack code="game:ingot-iron"/>`. An inline clickable item, proven in the Phase 0 spike.
 
-Block-level structure (headings, lists, recipes, callouts) is JSON; rich *inline* runs are VTML. This keeps authoring familiar to anyone who has edited a VS handbook entry.
-
----
-
-## 7. Quests & Progression Framework (soft)
-
-`quest` blocks degrade by capability:
-
-- **PF loaded + `questId` set** → checkboxes reflect live quest state; the active objective shows the **tracked** pin; completed items strike through; chapter header can show progress pips.
-- **PF absent, or no `questId`** → renders as a static checklist from the `items` array (with `done` flags as authored). No live tracking, no error.
-
-Never a hard dependency. A guide with quest blocks is fully readable without PF installed.
+Block structure is JSON. Inline runs are VTML. Anyone who has edited a handbook entry already knows the inline half.
 
 ---
 
-## 8. Links — internal cross-references first
+## 7. Quests and Progression Framework
 
-`link` (and inline `<a>`) must support **internal navigation**, not just URLs. A guide book's core move is "see the Smithing chapter" and jump there. The VS handbook already does clickable internal links (`handbook://...`), so the mechanism is effectively free — we mirror it.
+A `quest` block degrades by capability.
 
-`to` accepts:
+- With Progression Framework loaded and `questId` set: checkboxes track live state, the active objective shows the tracked pin, and completed items strike through. The chapter header may show progress pips.
+- Without Progression Framework, or without `questId`: the block renders as a static checklist from `items` and honors the authored `done` flags. No tracking. No error.
+
+Progression Framework is never required. A guide that uses quest blocks reads fine without it.
+
+---
+
+## 8. Links resolve internally first
+
+`link`, and inline `<a>`, support internal navigation, not only URLs. The core move of a guide book is to say "see the Smithing chapter" and take the reader there. The handbook already resolves in-engine links, so the mechanism costs nothing. We reuse it.
+
+`to` accepts four forms.
 
 | Form | Jumps to |
 |------|----------|
 | `almanac://chapter/<id>` | another chapter by `id` |
-| `almanac://chapter/<id>#<sectionTitle>` | a section within a chapter |
-| `handbook://<page>` | a vanilla handbook page (hand off to the game's handbook) |
-| `https://...` | external URL (confirm-before-open dialog) |
+| `almanac://chapter/<id>#<sectionTitle>` | a section inside a chapter |
+| `handbook://<page>` | a vanilla handbook page, handed to the game |
+| `https://...` | an external URL, behind a confirm-before-open dialog |
 
-Internal jumps push onto the book's nav history so the back action returns the reader.
+An internal jump pushes onto the book's history. Back returns the reader to where they were.
 
-All four forms are kept — the book is open, not a walled garden. This mirrors vanilla precedent: the handbook and settings menu already use the same in-engine link-handoff pattern, so the renderer support is free and proven.
+All four forms stay. The book is open, not a walled garden. The base game does the same in its handbook and its settings menu, which is where this link-handoff pattern is already proven.
 
 ---
 
 ## 9. Localization
 
-Any string field (`title`, `subtitle`, `byline`, block `text`, captions, step items) accepts **either**:
+Any string field accepts a literal or a lang key. This covers `title`, `subtitle`, `byline`, block `text`, captions, and step items.
 
-- a literal string (`"Getting Started"`), **or**
-- a lang key prefixed `#` (`"#almanac:fieldwright-getting-started"`), resolved through VS's standard lang system.
+- A literal string, for example `"Getting Started"`.
+- A lang key prefixed with `#`, for example `"#almanac:fieldwright-getting-started"`, resolved through the game's lang system.
 
-Free translations: ship `assets/<domain>/lang/<locale>.json` as normal. Mixed literal + key within one guide is allowed.
+To translate, ship `assets/<domain>/lang/<locale>.json` as usual. A single guide may mix literals and keys.
 
 ---
 
-## 10. Minimal complete example
+## 10. A complete example
 
 ```json
 {
@@ -213,7 +211,7 @@ Free translations: ship `assets/<domain>/lang/<locale>.json` as normal. Mixed li
       "pageBreakBefore": true,
       "blocks": [
         { "type": "callout", "variant": "author",
-          "text": "Check your rod against the sea-level mark each spring. Frost heaves the ground; trust the stone, not the soil." },
+          "text": "Check your rod against the sea-level mark each spring. Frost heaves the ground. Trust the stone, not the soil." },
         { "type": "quest", "questId": "fieldwright:first-survey", "items": [
           { "text": "Assemble a Surveyor's Rod", "done": true },
           { "text": "Drive the datum stake at the river bend", "done": true },
@@ -230,9 +228,9 @@ Free translations: ship `assets/<domain>/lang/<locale>.json` as normal. Mixed li
 
 ---
 
-## Open for v0.2+
+## Planned for v0.2 and later
 
-- `table` block (committed, deferred from v0.1).
+- The `table` block, committed and deferred from v0.1.
 - Multi-column layouts beyond the two-page spread.
-- Author-supplied custom ornament art per chapter.
-- Web WYSIWYG generator auto-derived from the published JSON Schema (Netlify-hosted).
+- Author-supplied ornament art per chapter.
+- A web editor that builds and previews a guide pack, generated from the published JSON Schema and hosted free.
