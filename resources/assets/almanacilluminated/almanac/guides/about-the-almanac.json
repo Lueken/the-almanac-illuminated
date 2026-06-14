@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Lueken/the-almanac-illuminated/main/docs/guide-pack.schema.json",
+  "schemaVersion": 1,
+  "id": "almanacilluminated:about",
+  "gate": "almanacilluminated",
+  "title": "The Almanac",
+  "subtitle": "What a chapter can hold",
+  "byline": "set down by Venah",
+  "accentColor": "#7a5a2e",
+  "sections": [
+    {
+      "id": "blocks",
+      "title": "What a chapter can hold",
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "A chapter is built from blocks. Among them are illustrations and live crafting recipes, both drawn by the book." },
+        { "type": "figure", "image": "game:textures/gui/logo.png", "align": "full",
+          "caption": "A figure scales to fit the column, caption set beneath it." },
+        { "type": "paragraph",
+          "text": "A recipe block reuses the handbook's own grid, so it stays correct as the game changes:" },
+        { "type": "recipe", "output": "game:bandage-clean" }
+      ]
+    },
+    {
+      "id": "back",
+      "blocks": [
+        { "type": "link", "to": "almanac://chapter/almanacilluminated:welcome",
+          "text": "Back to the welcome page." }
+      ]
+    }
+  ]
+}

@@ -19,6 +19,11 @@ public class GuidePack
     public string? Icon;
     public string? AccentColor;
     public int? Order;
+
+    /// <summary>Gate-less chapters only. Pins this chapter first in the front matter
+    /// and makes it the book's default landing page. The server overview opts in here.</summary>
+    public bool Overview;
+
     public List<GuideSection> Sections = new();
 
     /// <summary>Asset location this pack was read from. For logs and diagnostics.</summary>

@@ -5,23 +5,23 @@ using Vintagestory.API.Common;
 namespace AlmanacIlluminated;
 
 /// <summary>
-/// An embedded illustration. Loads a PNG texture and bakes it onto the parchment
-/// scaled to the text column, aspect preserved. "full" spans the column on its
-/// own line; "left" and "right" float it at half width with text flowing beside
-/// it (the richtext engine narrows the flow path around a floated component).
+/// An embedded illustration. Draws a PNG onto the parchment scaled to the text
+/// column, aspect preserved. "full" spans the column on its own line; "left" and
+/// "right" float it at half width with text flowing beside it.
 ///
-/// The image is painted in ComposeElements via a Cairo surface pattern, the same
-/// path GuiElementImage uses, so there is no per-frame GL work and no premultiply
-/// dance. A thin ink frame reads the plate as inset; a missing image shows a
-/// faint placeholder so the author sees the gap.
+/// The image is loaded fresh inside ComposeElements and disposed there. The
+/// component is shared across the paginator's measurement passes and the real
+/// page, so it must NOT retain a disposable surface: whichever container is
+/// disposed first would dispose the shared surface and crash the others.
 /// </summary>
 public class FigureComponent : RichTextComponentBase
 {
-    private readonly ImageSurface? image;
+    private readonly AssetLocation? loc;
     private readonly bool loaded;
-    private readonly double aspect;   // native height / native width
+    private readonly double aspect;     // native height / native width
+    private readonly double nativeW;
 
-    private double drawW, drawH;      // resolved each layout pass in CalcBounds
+    private double drawW, drawH;        // resolved each layout pass in CalcBounds
 
     private static readonly double[] FrameInk = { 0.13, 0.09, 0.05, 0.55 };
     private static readonly double[] MissingFill = { 0.85, 0.80, 0.68, 1.0 };
@@ -34,16 +34,25 @@ public class FigureComponent : RichTextComponentBase
 
         if (!string.IsNullOrEmpty(imagePath))
         {
-            var loc = new AssetLocation(imagePath).WithPathPrefixOnce("textures/");
-            if (api.Assets.TryGet(loc) != null)
+            var l = new AssetLocation(imagePath).WithPathPrefixOnce("textures/");
+            if (api.Assets.TryGet(l) != null)
             {
-                try { image = GuiElement.getImageSurfaceFromAsset(api, loc); }
-                catch { image = null; }
+                try
+                {
+                    // Probe once for the native size, then dispose. The draw reloads.
+                    using var probe = GuiElement.getImageSurfaceFromAsset(api, l);
+                    if (probe != null && probe.Width > 0 && probe.Height > 0)
+                    {
+                        loc = l;
+                        nativeW = probe.Width;
+                        aspect = (double)probe.Height / probe.Width;
+                        loaded = true;
+                    }
+                }
+                catch { }
             }
         }
-
-        loaded = image != null && image.Width > 0 && image.Height > 0;
-        aspect = loaded ? (double)image!.Height / image.Width : 0.6;
+        if (!loaded) aspect = 0.6;
 
         BoundsPerLine = new[] { new LineRectangled(0, 0, 0, 0) };
     }
@@ -63,7 +72,7 @@ public class FigureComponent : RichTextComponentBase
         else
         {
             drawW = colW * 0.5;
-            if (loaded && drawW > image!.Width) drawW = image.Width;
+            if (loaded && drawW > nativeW) drawW = nativeW;
         }
         if (drawW < 1) drawW = colW;
         drawH = drawW * aspect;
@@ -93,22 +102,29 @@ public class FigureComponent : RichTextComponentBase
         var b = BoundsPerLine[0];
         if (b.Width < 1 || b.Height < 1) return;
 
-        if (loaded && drawW > 0)
+        if (loaded && loc != null && drawW > 0)
         {
-            ctx.Save();
-            var pattern = new SurfacePattern(image);
-            // Map the destination rect onto the source image: user point (b.X, b.Y)
-            // samples pattern (0,0); (b.X+drawW, b.Y+drawH) samples (imgW, imgH).
-            var m = new Matrix();
-            m.Scale(image!.Width / drawW, image.Height / drawH);
-            m.Translate(-b.X, -b.Y);
-            pattern.Matrix = m;
-            pattern.Filter = Filter.Best;
-            ctx.SetSource(pattern);
-            ctx.Rectangle(b.X, b.Y, drawW, drawH);
-            ctx.Fill();
-            ctx.Restore();
-            pattern.Dispose();
+            ImageSurface? img = null;
+            try
+            {
+                img = GuiElement.getImageSurfaceFromAsset(api, loc);
+                ctx.Save();
+                var pattern = new SurfacePattern(img);
+                // Map the destination rect onto the source image: user point (b.X, b.Y)
+                // samples pattern (0,0); (b.X+drawW, b.Y+drawH) samples (imgW, imgH).
+                var m = new Matrix();
+                m.Scale(img.Width / drawW, img.Height / drawH);
+                m.Translate(-b.X, -b.Y);
+                pattern.Matrix = m;
+                pattern.Filter = Filter.Best;
+                ctx.SetSource(pattern);
+                ctx.Rectangle(b.X, b.Y, drawW, drawH);
+                ctx.Fill();
+                ctx.Restore();
+                pattern.Dispose();
+            }
+            catch { }
+            finally { img?.Dispose(); }
         }
         else
         {
@@ -124,11 +140,5 @@ public class FigureComponent : RichTextComponentBase
         ctx.LineWidth = GuiElement.scaled(1);
         ctx.SetSourceRGBA(FrameInk[0], FrameInk[1], FrameInk[2], FrameInk[3]);
         ctx.Stroke();
-    }
-
-    public override void Dispose()
-    {
-        base.Dispose();
-        image?.Dispose();
     }
 }

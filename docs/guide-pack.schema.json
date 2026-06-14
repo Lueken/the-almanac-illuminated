@@ -46,6 +46,10 @@
       "type": "integer",
       "description": "Gate-less (front matter) chapters only. Sort position among front matter, lower first. Ignored on gated chapters."
     },
+    "overview": {
+      "type": "boolean",
+      "description": "Gate-less chapters only. Pins this chapter first in the front matter and makes it the book's default landing page. The server overview opts in here."
+    },
     "sections": {
       "type": "array",
       "minItems": 1,
@@ -53,6 +57,12 @@
       "description": "The ordered content. The engine flows sections across the spread."
     }
   },
+  "allOf": [
+    {
+      "if": { "required": ["overview"], "properties": { "overview": { "const": true } } },
+      "then": { "not": { "required": ["gate"] }, "description": "overview is gate-less only." }
+    }
+  ],
   "$defs": {
     "localizableString": {
       "type": "string",
@@ -98,7 +108,7 @@
         "type": {
           "enum": [
             "heading", "paragraph", "dropcap", "steps", "materials",
-            "recipe", "callout", "quest", "figure", "ledger", "divider", "link", "table"
+            "recipe", "callout", "quest", "figure", "ledger", "divider", "link", "contents", "table"
           ]
         },
         "requires": {
@@ -125,7 +135,11 @@
           "items": { "$ref": "#/$defs/localizableString" }
         },
         "ornament": { "type": "string" },
-        "to": { "type": "string" }
+        "to": { "type": "string" },
+        "include": {
+          "enum": ["added", "all"],
+          "description": "contents block only. Which mods to list: 'added' (default) hides the base game; 'all' lists every loaded mod."
+        }
       },
       "allOf": [
         {

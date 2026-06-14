@@ -63,9 +63,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
     {
         if (capi == null) return false;
 
-        // First visible guide pack for now; chapter navigation arrives with the nav/IA work.
-        var pack = guidePacks.Count > 0 ? guidePacks[0] : null;
-        bookDialog ??= new GuiDialogIlluminatedBook(capi, pack);
+        // The whole visible library, ordered: the book opens to the overview (or
+        // first front matter) and navigates between chapters via internal links.
+        bookDialog ??= new GuiDialogIlluminatedBook(capi, new GuideLibrary(capi, guidePacks));
 
         if (bookDialog.IsOpened()) bookDialog.TryClose();
         else bookDialog.TryOpen();

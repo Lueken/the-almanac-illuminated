@@ -1,0 +1,46 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Lueken/the-almanac-illuminated/main/docs/guide-pack.schema.json",
+  "schemaVersion": 1,
+  "id": "yourserver:overview",
+  "overview": true,
+  "title": "Welcome to Your Server",
+  "subtitle": "Read this first",
+  "byline": "your server team",
+  "accentColor": "#7a5a2e",
+
+  "sections": [
+    {
+      "id": "welcome",
+      "title": "Welcome",
+      "blocks": [
+        { "type": "paragraph", "dropcap": true,
+          "text": "One or two paragraphs on what this server is and the kind of play it is built for. Set the tone here." }
+      ]
+    },
+    {
+      "id": "rules",
+      "title": "The Rules",
+      "keepTogether": true,
+      "blocks": [
+        { "type": "steps", "ordered": true, "items": [
+          "Be decent to other players.",
+          "No griefing, no stealing from claims.",
+          "Keep builds off the spawn roads.",
+          "Ask a moderator if you are unsure."
+        ]},
+        { "type": "callout", "variant": "warning",
+          "text": "Breaking the claim rules is the one thing that gets you removed without warning." }
+      ]
+    },
+    {
+      "id": "the-mods",
+      "title": "What is installed",
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "Every mod on the server is listed below. The ones with a guide are links. Open one to learn how it changes the world." },
+        { "type": "contents", "include": "added" }
+      ]
+    }
+  ]
+}

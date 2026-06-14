@@ -25,9 +25,9 @@ public static class ChapterRenderer
     /// with keepTogether stays whole; pageBreakBefore forces a fresh page; a title
     /// never orphans from its first block. Returns one component array per page.
     /// </summary>
-    public static List<RichTextComponentBase[]> RenderPages(ICoreClientAPI capi, GuidePack pack, Action<LinkTextComponent>? onLink, double pageWidth, double pageHeight)
+    public static List<RichTextComponentBase[]> RenderPages(ICoreClientAPI capi, GuidePack pack, GuideLibrary library, Action<LinkTextComponent>? onLink, double pageWidth, double pageHeight)
     {
-        var atoms = BuildAtoms(capi, pack, onLink);
+        var atoms = BuildAtoms(capi, pack, library, onLink);
         return Paginate(capi, atoms, pageWidth, pageHeight);
     }
 
@@ -36,6 +36,7 @@ public static class ChapterRenderer
     {
         public readonly List<RichTextComponentBase> Comps = new();
         public bool PageBreakBefore;
+        public bool KeepTogether;
     }
 
     /// <summary>
@@ -43,7 +44,7 @@ public static class ChapterRenderer
     /// section is a single atom. Otherwise the title binds to the first block (so a
     /// heading never ends a page alone) and each later block is its own atom.
     /// </summary>
-    private static List<Atom> BuildAtoms(ICoreClientAPI capi, GuidePack pack, Action<LinkTextComponent>? onLink)
+    private static List<Atom> BuildAtoms(ICoreClientAPI capi, GuidePack pack, GuideLibrary library, Action<LinkTextComponent>? onLink)
     {
         var heading = CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink);
         var body = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithColor(Ink);
@@ -56,21 +57,22 @@ public static class ChapterRenderer
         foreach (var sec in pack.Sections)
         {
             var title = new List<RichTextComponentBase>();
-            if (!string.IsNullOrEmpty(sec.Title))
-                title.Add(new RichTextComponent(capi, sec.Title + "\n", heading));
+            string? secTitle = GuideLibrary.Localize(sec.Title);
+            if (!string.IsNullOrEmpty(secTitle))
+                title.Add(new RichTextComponent(capi, secTitle + "\n", heading));
 
             var blockLists = new List<List<RichTextComponentBase>>();
             foreach (var block in sec.Blocks)
             {
                 if (!Gated(capi, block)) continue;
                 var bl = new List<RichTextComponentBase>();
-                RenderBlock(capi, block, bl, body, italic, dropCap, onLink, initial);
+                RenderBlock(capi, block, bl, body, italic, dropCap, library, onLink, initial);
                 if (bl.Count > 0) blockLists.Add(bl);
             }
 
             if (sec.KeepTogether)
             {
-                var a = new Atom { PageBreakBefore = sec.PageBreakBefore };
+                var a = new Atom { PageBreakBefore = sec.PageBreakBefore, KeepTogether = true };
                 a.Comps.AddRange(title);
                 foreach (var bl in blockLists) a.Comps.AddRange(bl);
                 if (a.Comps.Count > 0) atoms.Add(a);
@@ -93,7 +95,13 @@ public static class ChapterRenderer
         return atoms;
     }
 
-    /// <summary>Greedily packs atoms into page-height columns at the page width.</summary>
+    /// <summary>
+    /// Packs atoms into page-height columns at the page width. A small atom moves
+    /// whole to the next page when it does not fit. A splittable atom taller than
+    /// the space left (a long contents list, a long step list) flows across pages
+    /// by its own components, so nothing ever runs off the bottom. keepTogether
+    /// atoms stay whole, and only split as a last resort when bigger than a page.
+    /// </summary>
     private static List<RichTextComponentBase[]> Paginate(ICoreClientAPI capi, List<Atom> atoms, double pageWidth, double pageHeight)
     {
         double scale = RuntimeEnv.GUIScale <= 0 ? 1 : RuntimeEnv.GUIScale;
@@ -102,31 +110,54 @@ public static class ChapterRenderer
         var pages = new List<RichTextComponentBase[]>();
         var current = new List<RichTextComponentBase>();
 
-        foreach (var atom in atoms)
+        void Flush()
         {
-            if (atom.PageBreakBefore && current.Count > 0)
-            {
-                pages.Add(current.ToArray());
-                current = new List<RichTextComponentBase>();
-            }
+            if (current.Count > 0) { pages.Add(current.ToArray()); current = new List<RichTextComponentBase>(); }
+        }
 
-            var trial = new List<RichTextComponentBase>(current);
-            trial.AddRange(atom.Comps);
-            double trialH = MeasureHeight(capi, trial.ToArray(), pageWidth);
+        bool Fits(List<RichTextComponentBase> list)
+            => MeasureHeight(capi, list.ToArray(), pageWidth) <= availH;
 
-            if (current.Count > 0 && trialH > availH)
+        // Flow components onto the current page, breaking to a new page whenever
+        // the next one would overflow. A single component taller than a page is
+        // left where it lands rather than looping forever.
+        void PackByComponent(IReadOnlyList<RichTextComponentBase> comps)
+        {
+            foreach (var c in comps)
             {
-                // Won't fit beneath what is already on the page: start a fresh one.
-                pages.Add(current.ToArray());
-                current = new List<RichTextComponentBase>(atom.Comps);
-            }
-            else
-            {
-                current = trial;
+                current.Add(c);
+                if (current.Count > 1 && !Fits(current))
+                {
+                    current.RemoveAt(current.Count - 1);
+                    Flush();
+                    current.Add(c);
+                }
             }
         }
 
-        if (current.Count > 0) pages.Add(current.ToArray());
+        foreach (var atom in atoms)
+        {
+            if (atom.PageBreakBefore) Flush();
+
+            var trial = new List<RichTextComponentBase>(current);
+            trial.AddRange(atom.Comps);
+            if (Fits(trial)) { current = trial; continue; }   // whole atom fits as-is
+
+            if (atom.KeepTogether)
+            {
+                Flush();
+                if (Fits(atom.Comps))
+                    current.AddRange(atom.Comps);
+                else
+                    PackByComponent(atom.Comps);   // taller than a whole page: split rather than clip
+            }
+            else
+            {
+                PackByComponent(atom.Comps);        // fill the rest of this page, then flow over
+            }
+        }
+
+        Flush();
         if (pages.Count == 0) pages.Add(System.Array.Empty<RichTextComponentBase>());
         return pages;
     }
@@ -166,10 +197,24 @@ public static class ChapterRenderer
     }
 
     private static void RenderBlock(ICoreClientAPI capi, GuideBlock block, List<RichTextComponentBase> comps,
-        CairoFont body, CairoFont italic, CairoFont dropCap, Action<LinkTextComponent>? onLink, string authorInitial)
+        CairoFont body, CairoFont italic, CairoFont dropCap, GuideLibrary library, Action<LinkTextComponent>? onLink, string authorInitial)
     {
         switch (block.Type)
         {
+            case "contents":
+            {
+                bool all = (block.Str("include") ?? "added") == "all";
+                var grey = body.Clone().WithColor(new[] { 0.45, 0.40, 0.33, 1.0 });
+                foreach (var e in library.ModEntries(addedOnly: !all))
+                {
+                    if (e.Chapter != null)
+                        comps.AddRange(VtmlUtil.Richtextify(capi, $"  <a href=\"almanac://chapter/{e.Chapter.Id}\">{e.Name}</a>\n", body, onLink));
+                    else
+                        comps.Add(new RichTextComponent(capi, "  " + e.Name + "\n", grey));
+                }
+                break;
+            }
+
             case "heading":
                 comps.Add(new RichTextComponent(capi, (block.Str("text") ?? "") + "\n",
                     CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink)));

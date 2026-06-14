@@ -13,11 +13,13 @@ Status of the build. The format spec is at `docs/SCHEMA.md` and is open for comm
 - **Figure block.** Bakes a PNG onto the parchment via a Cairo surface pattern, scaled to the column with aspect preserved. `full` spans the column, `left` and `right` float with text beside them.
 - **Hybrid paginator.** Measures each block at the page width and packs blocks into page-height columns. `keepTogether` holds a section whole, `pageBreakBefore` forces a fresh page, and a title never orphans from its first block. Replaces one-section-per-page.
 - **JSON Schema.** `docs/guide-pack.schema.json`, mirroring the spec with per-block validation. Authors get autocomplete and live error checking via a `$schema` line. Foundation for the web editor.
+- **Server overview and the contents block.** A gate-less chapter can set `overview: true` to pin first and become the landing page. The `contents` block fills itself from the live modlist (documented mods link, the rest show muted), `include` `added` or `all`. A copy-me template ships at `docs/examples/`. See SCHEMA.md section 11.
+- **Multi-chapter navigation.** The book holds the whole library. Internal `almanac://chapter/<id>` links jump between chapters, Prev/Next read straight through the book across chapter boundaries, and Back and Contents buttons return. Two page readouts: this chapter, and the whole book. All chapters paginate once and cache.
 
 ## Next
 
 - **In-game author preview.** Watch a guide folder and hot-reload the chapter on change. Real renderer, zero drift.
-- **Navigation and IA.** A to Z index tabs, Contents and Journal tabs, top-edge bookmark ribbons, flip-to-search. Internal links jump here.
+- **Navigation and IA, the rest.** A to Z index tabs, a Journal tab, top-edge bookmark ribbons, flip-to-search. Internal links and a contents page already work; this is the chrome on top. `handbook://` and external URL links still need their handlers.
 - **The magic (phase 3).** Alt+J materialize animation, sprite page-turn with randomized sounds, speed-ramped flip-to-search, diegetic quest-complete notification.
 - **Integrations (phase 4).** Codex discovery renders as the Journal chapter, Progression Framework binds quest blocks to live state, server bridge sends guide manifests for server-side mods.
 

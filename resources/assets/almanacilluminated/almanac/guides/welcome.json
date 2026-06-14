@@ -2,6 +2,8 @@
   "$schema": "https://raw.githubusercontent.com/Lueken/the-almanac-illuminated/main/docs/guide-pack.schema.json",
   "schemaVersion": 1,
   "id": "almanacilluminated:welcome",
+  "overview": true,
+  "order": 0,
   "title": "Welcome to The Almanac",
   "subtitle": "How this book works",
   "byline": "set down by Venah",
@@ -15,9 +17,18 @@
           "text": "This book gathers guide chapters from the mods you have loaded. A chapter appears only when its mod is present, so your Almanac always matches your modlist." },
         { "type": "steps", "items": [
           "Press Alt+J to open the book.",
-          "Use the tabs to find a mod.",
-          "Turn the page to read its chapter."
+          "Pick a mod from the contents to read its chapter.",
+          "Use Back to return, or Contents to come home."
         ]}
+      ]
+    },
+    {
+      "id": "your-almanac",
+      "title": "Your Almanac",
+      "blocks": [
+        { "type": "paragraph",
+          "text": "Every mod you have loaded is listed below. The ones with a guide are links. The rest have no chapter yet." },
+        { "type": "contents" }
       ]
     },
     {
@@ -27,21 +38,9 @@
         { "type": "paragraph",
           "text": "Write a chapter as plain JSON and ship it in your own mod. The format is documented in the repository. The book owns layout, fonts, and gating. You bring the content." },
         { "type": "callout", "variant": "author",
-          "text": "Keep chapters short. A reader opens the book mid-task and wants the one thing they came for, not an essay." }
-      ]
-    },
-    {
-      "id": "what-a-chapter-holds",
-      "title": "What a chapter can hold",
-      "keepTogether": true,
-      "blocks": [
-        { "type": "paragraph",
-          "text": "A chapter is built from blocks. Among them are illustrations and live crafting recipes, both drawn by the book." },
-        { "type": "figure", "image": "game:textures/gui/logo.png", "align": "full",
-          "caption": "A figure scales to fit the column, caption set beneath it." },
-        { "type": "paragraph",
-          "text": "A recipe block reuses the handbook's own grid, so it stays correct as the game changes:" },
-        { "type": "recipe", "output": "game:bandage-clean" }
+          "text": "Keep chapters short. A reader opens the book mid-task and wants the one thing they came for, not an essay." },
+        { "type": "link", "to": "almanac://chapter/almanacilluminated:about",
+          "text": "See what a chapter can hold." }
       ]
     }
   ]

@@ -68,6 +68,7 @@ The top level of every guide file.
 | `icon` | no | An itemstack code or texture path for the chapter's index icon. |
 | `accentColor` | no | Hex. The chapter's identity color, used on drop-caps and rules. Defaults to a parchment neutral. |
 | `order` | no | Gate-less chapters only. Integer sort position among front matter, lower first. Ties break by `id`. Ignored on gated chapters. |
+| `overview` | no | Gate-less chapters only. Pins this chapter first in the front matter and makes it the book's landing page. For the server overview. See section 11. |
 | `sections` | yes | The ordered content. See section 4. |
 
 Identity is bounded. A chapter sets its `icon`, its `accentColor`, and its content. It does not set its placement, its layout, or its fonts. A chapter carries its own identity. The book keeps its own.
@@ -76,7 +77,7 @@ Identity is bounded. A chapter sets its `icon`, its `accentColor`, and its conte
 
 A gated chapter does not choose where it sits. The book orders gated chapters alphabetically by the display name of the mod each one documents. A mod that ships more than one chapter sorts its own chapters by title beneath that name. The index letter comes from the same name. No gated chapter can set its placement, so none can jump ahead of another.
 
-Gate-less chapters are different. They are front matter, and they belong to the pack rather than to a competing mod, so the pack owner may order them with the `order` field. Front matter sorts by `order`, then by `id`, and sits ahead of the alphabetical run. `order` plus `id` is a total ordering, so front matter from two installed packs interleaves predictably instead of colliding.
+Gate-less chapters are different. They are front matter, and they belong to the pack rather than to a competing mod, so the pack owner may order them with the `order` field. Front matter sorts by `order`, then by `id`, and sits ahead of the alphabetical run. `order` plus `id` is a total ordering, so front matter from two installed packs interleaves predictably instead of colliding. One gate-less chapter may set `overview: true` to pin ahead of all other front matter and become the book's landing page. See section 11.
 
 This split is deliberate. The lever exists only where one owner controls the content. Where chapters from different authors compete under a mod name, placement stays the platform's call.
 
@@ -128,6 +129,7 @@ A block is `{ "type": "...", ...props }`. Any block may carry one common field:
 | `ledger` | `entries: [text, ...]` | A dated journal block in italic. |
 | `divider` | `ornament?` | A horizontal ornamental rule in the accent color. |
 | `link` | `to`, `text` | A clickable cross-reference. See section 8. |
+| `contents` | `include?` (`added`, `all`) | An auto table of contents of loaded mods. See section 11. |
 
 **The `recipe` block.** Supply `recipe` or `output`, never both. `recipe` takes a recipe code and renders that one recipe. `output` takes an item code and renders every recipe that produces it, the way the handbook does. Use `recipe` for one specific recipe, `output` for all of them.
 
@@ -252,6 +254,33 @@ To write a literal that begins with `#`, double it. The value `##1 rule of the t
   ]
 }
 ```
+
+---
+
+## 11. The server overview and the contents block
+
+A server admin wants a front page: what this server is, its rules, the spirit of the place, and a way into the rest of the book. The format already carries it, and two small features make it standardized.
+
+**The overview chapter.** Ship a gate-less guide and set `overview: true`. It pins ahead of all other front matter and becomes the page the book opens to. It is opt-in. A server that does not ship one simply opens to its first front matter, or to the first chapter. Only one chapter holds the overview slot; if two claim it, the first by `order` then `id` wins and the engine logs the rest as ordinary front matter.
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "myserver:overview",
+  "overview": true,
+  "title": "Welcome to Wilderlands",
+  "sections": [ ... ]
+}
+```
+
+**The contents block.** Drop `{ "type": "contents" }` into any chapter, usually the overview, and the book fills it at render with a row per loaded mod. A mod that ships a chapter renders as a link to it. A mod with no chapter renders as plain, muted text, so a player sees the whole modlist and what still lacks a guide. The list rebuilds from the live modlist every time the book opens, so it never goes stale and needs no upkeep.
+
+- `include: "added"` is the default. It lists the mods the server added and hides the base game.
+- `include: "all"` lists every loaded mod, the base game included.
+
+The rows sort by display name. Because the block is authored, the admin wraps it in their own prose: a heading, a sentence of intent, then the table.
+
+A ready-to-edit overview template ships in the repository at `docs/examples/server-overview.example.json`. Copy it into your own server mod under `assets/<yourserver>/almanac/guides/`, fill in the prose, and it appears for everyone who joins.
 
 ---
 
