@@ -9,14 +9,13 @@ Status of the build. The format spec is at `docs/SCHEMA.md` and is open for comm
 - **Loader and gating.** Discovers `almanac/guides/*.json` across all loaded mods (registers a custom `almanac` asset category), parses to GuidePack, gates chapters by their `gate` modid and blocks by `requires`.
 - **Book at ~84% of screen, on parchment.** Dark leather board, two cream pages, dark ink serif text.
 - **Callouts.** Author's-hand callout (brighter vellum, rounded double red border, wax seal with the author's initial, red heading) and sibling variants (tip, warning, lore) sharing the frame in their own hues.
+- **Native recipe block.** Reuses the handbook's own grid component. `recipe` renders one recipe by name, `output` renders every recipe that produces an item. Degrades to a quiet notice when nothing resolves.
+- **Figure block.** Bakes a PNG onto the parchment via a Cairo surface pattern, scaled to the column with aspect preserved. `full` spans the column, `left` and `right` float with text beside them.
+- **Hybrid paginator.** Measures each block at the page width and packs blocks into page-height columns. `keepTogether` holds a section whole, `pageBreakBefore` forces a fresh page, and a title never orphans from its first block. Replaces one-section-per-page.
+- **JSON Schema.** `docs/guide-pack.schema.json`, mirroring the spec with per-block validation. Authors get autocomplete and live error checking via a `$schema` line. Foundation for the web editor.
 
 ## Next
 
-- **Renderer completion**
-  - Native recipe block. Render the grid recipe via the handbook's own component. `recipe` is one recipe, `output` is every recipe for the item. Currently a placeholder.
-  - Figure block. Load and draw the texture, scale to fit the column, honor align. Currently a placeholder.
-  - Hybrid paginator. Flow sections across pages honoring `keepTogether` and `pageBreakBefore` so a section that does not fit shifts to the next page instead of clipping. Currently one section per page.
-- **JSON Schema.** Publish a JSON Schema for the format so authors get autocomplete and validation. Foundation for the web editor.
 - **In-game author preview.** Watch a guide folder and hot-reload the chapter on change. Real renderer, zero drift.
 - **Navigation and IA.** A to Z index tabs, Contents and Journal tabs, top-edge bookmark ribbons, flip-to-search. Internal links jump here.
 - **The magic (phase 3).** Alt+J materialize animation, sprite page-turn with randomized sounds, speed-ramped flip-to-search, diegetic quest-complete notification.
