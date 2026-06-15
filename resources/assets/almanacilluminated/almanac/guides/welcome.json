@@ -2,7 +2,6 @@
   "$schema": "https://raw.githubusercontent.com/Lueken/the-almanac-illuminated/main/docs/guide-pack.schema.json",
   "schemaVersion": 1,
   "id": "almanacilluminated:welcome",
-  "overview": true,
   "order": 0,
   "title": "Welcome to The Almanac",
   "subtitle": "How this book works",

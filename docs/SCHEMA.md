@@ -261,7 +261,7 @@ To write a literal that begins with `#`, double it. The value `##1 rule of the t
 
 A server admin wants a front page: what this server is, its rules, the spirit of the place, and a way into the rest of the book. The format already carries it, and two small features make it standardized.
 
-**The overview chapter.** Ship a gate-less guide and set `overview: true`. It pins ahead of all other front matter and becomes the page the book opens to. It is opt-in. A server that does not ship one simply opens to its first front matter, or to the first chapter. Only one chapter holds the overview slot; if two claim it, the first by `order` then `id` wins and the engine logs the rest as ordinary front matter.
+**The overview chapter.** Ship a gate-less guide and set `overview: true`. It pins ahead of all other front matter and becomes the page the book opens to. It is opt-in. A server that does not ship one simply opens to its first front matter, or to the first chapter. Only one chapter holds the overview slot. If more than one claims it, the first by `order` then `id` wins; every other claimant is demoted to ordinary front matter. The engine logs a warning that names the offending chapters and their files, and posts a notice in chat when the book is opened, so the misconfiguration is visible and easy to fix.
 
 ```json
 {

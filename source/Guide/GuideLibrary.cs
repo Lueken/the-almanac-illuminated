@@ -31,16 +31,38 @@ public sealed class GuideLibrary
     public IReadOnlyList<GuidePack> All { get; }
     public IReadOnlyList<GuidePack> Ordered { get; }
 
+    /// <summary>The one chapter that holds the overview slot, or null if none claims it.</summary>
+    public GuidePack? Overview { get; }
+
+    /// <summary>Extra chapters that also set overview:true and were demoted. Empty when the config is clean.</summary>
+    public IReadOnlyList<GuidePack> OverviewConflicts { get; }
+
     public GuideLibrary(ICoreClientAPI capi, List<GuidePack> packs)
     {
         this.capi = capi;
         All = packs;
-        Ordered = BuildOrder(packs);
 
-        int overviews = packs.Count(p => p.Overview && string.IsNullOrEmpty(p.Gate));
-        if (overviews > 1)
+        // Only one overview is allowed. Among the claimants, the first by order
+        // then id wins the slot; the rest are demoted to ordinary front matter.
+        var claimants = packs
+            .Where(p => p.Overview && string.IsNullOrEmpty(p.Gate))
+            .OrderBy(p => p.Order ?? int.MaxValue)
+            .ThenBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        Overview = claimants.FirstOrDefault();
+        OverviewConflicts = claimants.Skip(1).ToList();
+
+        Ordered = BuildOrder(packs, Overview);
+
+        if (OverviewConflicts.Count > 0)
+        {
+            string offenders = string.Join("; ", OverviewConflicts.Select(p => $"'{p.Id}' ({p.Source})"));
             IlluminatedLogger.Warn(capi, "library",
-                $"{overviews} chapters claim overview. The first by order wins; the rest sort as normal front matter.");
+                $"More than one chapter sets overview:true, but only one is allowed. " +
+                $"Using '{Overview!.Id}' ({Overview.Source}) as the overview. " +
+                $"Ignoring the overview flag on: {offenders}. " +
+                "Remove overview from all but one chapter to silence this warning.");
+        }
     }
 
     /// <summary>The chapter the book opens to: the overview, else the first front matter, else the first chapter.</summary>
@@ -89,13 +111,14 @@ public sealed class GuideLibrary
     /// <summary>A chapter's title, localized, for the title bar and indexes.</summary>
     public string Title(GuidePack p) => Localize(p.Title) ?? p.Id ?? "Untitled";
 
-    private List<GuidePack> BuildOrder(List<GuidePack> packs)
+    private List<GuidePack> BuildOrder(List<GuidePack> packs, GuidePack? overview)
     {
         bool IsFront(GuidePack p) => string.IsNullOrEmpty(p.Gate);
 
-        var front = packs.Where(IsFront)
-            .OrderByDescending(p => p.Overview)
-            .ThenBy(p => p.Order ?? int.MaxValue)
+        // Front matter minus the overview winner, sorted by order then id. Demoted
+        // overview claimants fall in here and sort like any other front matter.
+        var front = packs.Where(p => IsFront(p) && p != overview)
+            .OrderBy(p => p.Order ?? int.MaxValue)
             .ThenBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -104,8 +127,11 @@ public sealed class GuideLibrary
             .ThenBy(p => Title(p), StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        front.AddRange(gated);
-        return front;
+        var ordered = new List<GuidePack>();
+        if (overview != null) ordered.Add(overview);   // pinned first
+        ordered.AddRange(front);
+        ordered.AddRange(gated);
+        return ordered;
     }
 
     /// <summary>

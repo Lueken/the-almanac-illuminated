@@ -13,6 +13,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
     private ICoreClientAPI? capi;
     private GuiDialogIlluminatedBook? bookDialog;
     private List<GuidePack> guidePacks = new();
+    private GuideLibrary? library;
 
     public override bool ShouldLoad(EnumAppSide side) => side == EnumAppSide.Client;
 
@@ -52,6 +53,10 @@ public class AlmanacIlluminatedModSystem : ModSystem
                 "Legacy 'almanaccodexilluminated' is loaded alongside Illuminated — both bind Alt+J. Disable the legacy mod.");
         }
 
+        // Build the library now (guide packs loaded in AssetsLoaded) so any
+        // overview-conflict warning is logged at startup, not only on first open.
+        library = new GuideLibrary(api, guidePacks);
+
         api.Input.RegisterHotKey(GuiDialogIlluminatedBook.HotkeyCode, "Open The Almanac",
             GlKeys.J, HotkeyType.GUIOrOtherControls, altPressed: true);
         api.Input.SetHotKeyHandler(GuiDialogIlluminatedBook.HotkeyCode, OnToggleBook);
@@ -65,7 +70,8 @@ public class AlmanacIlluminatedModSystem : ModSystem
 
         // The whole visible library, ordered: the book opens to the overview (or
         // first front matter) and navigates between chapters via internal links.
-        bookDialog ??= new GuiDialogIlluminatedBook(capi, new GuideLibrary(capi, guidePacks));
+        library ??= new GuideLibrary(capi, guidePacks);
+        bookDialog ??= new GuiDialogIlluminatedBook(capi, library);
 
         if (bookDialog.IsOpened()) bookDialog.TryClose();
         else bookDialog.TryOpen();

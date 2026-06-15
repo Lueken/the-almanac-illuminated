@@ -29,6 +29,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
     private Dictionary<GuidePack, List<RichTextComponentBase[]>>? cache;
     private int spreadIndex;
     private bool pendingOpenAtEnd;
+    private bool warnedConflict;
     private float lastFrameW, lastFrameH;
     private readonly Stack<string> history = new();
 
@@ -42,8 +43,24 @@ public class GuiDialogIlluminatedBook : GuiDialog
     public override void OnGuiOpened()
     {
         base.OnGuiOpened();
+        WarnOverviewConflictOnce();
         current ??= library.Default;
         ComposeSpread();
+    }
+
+    /// <summary>
+    /// Tell the admin, in chat, when more than one chapter claims the overview slot.
+    /// The library already resolved it deterministically; this just makes the
+    /// misconfiguration visible to whoever opens the book, once per session.
+    /// </summary>
+    private void WarnOverviewConflictOnce()
+    {
+        if (warnedConflict || library.OverviewConflicts.Count == 0) return;
+        warnedConflict = true;
+        string ids = string.Join(", ", library.OverviewConflicts.Select(p => p.Id));
+        capi.ShowChatMessage(
+            $"[Almanac] Config warning: more than one guide sets overview:true. " +
+            $"Using '{library.Overview?.Id}'. Remove overview from: {ids}. Only one overview is allowed.");
     }
 
     // --- Navigation -------------------------------------------------------
