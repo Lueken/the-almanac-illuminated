@@ -24,6 +24,10 @@ public class GuidePack
     /// and makes it the book's default landing page. The server overview opts in here.</summary>
     public bool Overview;
 
+    /// <summary>Marks this chapter as the contents/index page. It is kept out of the
+    /// chapter reading flow and tabs, and reached through the Contents tab instead.</summary>
+    public bool Contents;
+
     public List<GuideSection> Sections = new();
 
     /// <summary>Asset location this pack was read from. For logs and diagnostics.</summary>

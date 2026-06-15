@@ -37,6 +37,9 @@ public sealed class GuideLibrary
     /// <summary>Extra chapters that also set overview:true and were demoted. Empty when the config is clean.</summary>
     public IReadOnlyList<GuidePack> OverviewConflicts { get; }
 
+    /// <summary>The contents/index page, reached through the Contents tab. Kept out of the chapter flow.</summary>
+    public GuidePack? ContentsPage { get; }
+
     public GuideLibrary(ICoreClientAPI capi, List<GuidePack> packs)
     {
         this.capi = capi;
@@ -52,7 +55,10 @@ public sealed class GuideLibrary
         Overview = claimants.FirstOrDefault();
         OverviewConflicts = claimants.Skip(1).ToList();
 
-        Ordered = BuildOrder(packs, Overview);
+        // The contents page is its own thing, reached by tab, not part of the flow.
+        ContentsPage = packs.FirstOrDefault(p => p.Contents);
+
+        Ordered = BuildOrder(packs, Overview, ContentsPage);
 
         if (OverviewConflicts.Count > 0)
         {
@@ -76,6 +82,9 @@ public sealed class GuideLibrary
 
     /// <summary>The previous chapter in reading order, or null at the start of the book.</summary>
     public GuidePack? Prev(GuidePack p) { int i = IndexOf(p); return i > 0 ? Ordered[i - 1] : null; }
+
+    /// <summary>This chapter's position in reading order, or -1 if absent.</summary>
+    public int OrderIndex(GuidePack? p) => p == null ? -1 : IndexOf(p);
 
     private int IndexOf(GuidePack p)
     {
@@ -111,18 +120,18 @@ public sealed class GuideLibrary
     /// <summary>A chapter's title, localized, for the title bar and indexes.</summary>
     public string Title(GuidePack p) => Localize(p.Title) ?? p.Id ?? "Untitled";
 
-    private List<GuidePack> BuildOrder(List<GuidePack> packs, GuidePack? overview)
+    private List<GuidePack> BuildOrder(List<GuidePack> packs, GuidePack? overview, GuidePack? contents)
     {
         bool IsFront(GuidePack p) => string.IsNullOrEmpty(p.Gate);
 
-        // Front matter minus the overview winner, sorted by order then id. Demoted
-        // overview claimants fall in here and sort like any other front matter.
-        var front = packs.Where(p => IsFront(p) && p != overview)
+        // Front matter minus the overview winner and the contents page, sorted by
+        // order then id. Demoted overview claimants fall in here like normal front matter.
+        var front = packs.Where(p => IsFront(p) && p != overview && p != contents)
             .OrderBy(p => p.Order ?? int.MaxValue)
             .ThenBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var gated = packs.Where(p => !IsFront(p))
+        var gated = packs.Where(p => !IsFront(p) && p != contents)
             .OrderBy(p => ModName(p.Gate!), StringComparer.OrdinalIgnoreCase)
             .ThenBy(p => Title(p), StringComparer.OrdinalIgnoreCase)
             .ToList();

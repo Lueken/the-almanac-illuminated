@@ -4,9 +4,9 @@
   "id": "yourserver:overview",
   "overview": true,
   "title": "Welcome to Your Server",
-  "subtitle": "Read this first",
+  "subtitle": "How this world is different",
   "byline": "your server team",
-  "accentColor": "#7a5a2e",
+  "accentColor": "#6a5230",
 
   "sections": [
     {
@@ -14,32 +14,95 @@
       "title": "Welcome",
       "blocks": [
         { "type": "paragraph", "dropcap": true,
-          "text": "One or two paragraphs on what this server is and the kind of play it is built for. Set the tone here." }
+          "text": "This is not vanilla Vintage Story with a pile of mods bolted on. It is one world, tuned to feel like a single designed game. Survival here is slower, more physical, and more rewarding: tools are earned, materials have character, and progress comes from understanding the world rather than grinding through it." },
+        { "type": "paragraph",
+          "text": "What follows is the short version of how this place differs from the base game, and why. Read it before your first night. The rest of this book fills in the detail, one mod at a time." }
       ]
     },
+
     {
-      "id": "rules",
-      "title": "The Rules",
-      "keepTogether": true,
-      "blocks": [
-        { "type": "steps", "ordered": true, "items": [
-          "Be decent to other players.",
-          "No griefing, no stealing from claims.",
-          "Keep builds off the spawn roads.",
-          "Ask a moderator if you are unsure."
-        ]},
-        { "type": "callout", "variant": "warning",
-          "text": "Breaking the claim rules is the one thing that gets you removed without warning." }
-      ]
-    },
-    {
-      "id": "the-mods",
-      "title": "What is installed",
+      "id": "philosophy",
+      "title": "The Idea",
       "keepTogether": true,
       "blocks": [
         { "type": "paragraph",
-          "text": "Every mod on the server is listed below. The ones with a guide are links. Open one to learn how it changes the world." },
-        { "type": "contents", "include": "added" }
+          "text": "A good modpack is not the one with the most mods. It is the one with the fewest fights between them. Every mod here was chosen to pull in the same direction, so the systems reinforce each other instead of stacking on top of one another." },
+        { "type": "steps", "ordered": false, "items": [
+          "<strong>Every system has one owner.</strong> Heat, thirst, hunger, wood, ore, water are each run by a single mod, so nothing double-counts or contradicts.",
+          "<strong>Mods add, they do not replace.</strong> Vanilla recipes and progression still hold. The pack extends them with depth, not detours.",
+          "<strong>Progress is gated by knowledge and geology, not grind.</strong> The next tier is somewhere specific in the world. Your job is to find it.",
+          "<strong>Discovery is the spine.</strong> This Almanac and a quest framework keep track of what you have found and what comes next."
+        ]},
+        { "type": "callout", "variant": "author",
+          "text": "<i>[Your voice goes here: the one or two sentences on what you wanted this world to feel like, and why it is worth the slower pace.]</i>" }
+      ]
+    },
+
+    {
+      "id": "wood",
+      "title": "Why Wood Is Different Here",
+      "pageBreakBefore": true,
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "In vanilla, every log chops the same and a felled tree vanishes into a tidy stack. Here, wood is a material with grain and character." },
+        { "type": "paragraph",
+          "text": "Standing trees fall at the speed of their species. A pine or kapok gives way faster than vanilla; oak and maple resist; acacia, purpleheart, and ebony are genuinely hard work. The numbers behind it are real-world wood hardness, so the heaviest woods take two to three times longer to fell than the softest ones. Your axe divides that resistance: a copper axe crawls through oak, a steel axe makes short work of it. The two multiply, which is why an early axe on a hardwood feels so slow." },
+        { "type": "paragraph",
+          "text": "And felling is only the start. A trunk is limbed and split at a chopping block, or sawn into lumber at a sawbuck, with the axe and saw each carrying their own work modes. Wood becomes a small craft of its own, and trees topple where they fall rather than blinking out of existence." },
+        { "type": "callout", "variant": "tip",
+          "text": "Early on, chase the softwoods, pine, larch, and redwood. Save the hardwoods for when you have earned a metal axe." }
+      ]
+    },
+
+    {
+      "id": "ore",
+      "title": "Why Ore Is Different Here",
+      "pageBreakBefore": true,
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "Ore does not hide at random in the dark. It belongs to the rock around it." },
+        { "type": "paragraph",
+          "text": "The stone itself is varied, many rock types laid down in strata the way real geology stacks them, and each metal lives in particular rocks at particular depths. You do not strip-mine and hope. You read the ground: find the right rock, follow the right layer, and the next tier of metal is there waiting. Prospecting becomes a real skill rather than a chore, and your finds can be shared and mapped, so the search is deliberate instead of blind." },
+        { "type": "paragraph",
+          "text": "The whole tech ladder hangs on this. Copper, then bronze, then iron, then steel, each waits in its own geology. Exploration is the unlock, not the grind." },
+        { "type": "callout", "variant": "tip",
+          "text": "Learn which rocks carry which metals. A prospecting pick and a habit of reading the strata will move you up the ladder faster than any amount of digging." }
+      ]
+    },
+
+    {
+      "id": "water",
+      "title": "Why Water Is Different Here",
+      "pageBreakBefore": true,
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "You can die of thirst here. Water is a resource you manage, not scenery you walk past." },
+        { "type": "paragraph",
+          "text": "Thirst sits alongside hunger, and it ties into heat and what you wear. Work a hot biome in the wrong layers and you dry out faster. One system runs all of it together, so staying cool, staying watered, and staying fed are a single balancing act rather than three separate bars you can ignore." },
+        { "type": "paragraph",
+          "text": "The world's water is reshaped to match. Rivers and drainage follow the land the way water really moves, and water has to be collected and carried. A container and a clean source are first-day priorities, not afterthoughts." },
+        { "type": "callout", "variant": "tip",
+          "text": "Keep a filled container on you, know where the clean water sits near your base, and watch your thirst whenever you are working in the heat." }
+      ]
+    },
+
+    {
+      "id": "hunger",
+      "title": "Why Hunger Is Different Here",
+      "pageBreakBefore": true,
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "Calories keep you alive. Variety makes you strong." },
+        { "type": "paragraph",
+          "text": "A monotonous diet fills the hunger bar and nothing more. Eat across the food groups and a diet-variety bonus lifts your maximum health, so cooking widely is its own kind of progression, not just upkeep." },
+        { "type": "paragraph",
+          "text": "And there is a great deal to cook. Meals have real depth, dishes and preserves, ferments, pickles, and vinegars layered on top of the vanilla kitchen. Storage, smoking, drying, and fermentation each have their place, so a stocked larder is a genuine project, and a fed, varied table is a measurable advantage in the field." },
+        { "type": "callout", "variant": "author",
+          "text": "<i>[Your voice goes here: why food matters to the kind of game you wanted, the larder as a goal rather than a number to top up.]</i>" }
       ]
     }
   ]

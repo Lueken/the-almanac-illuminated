@@ -50,6 +50,10 @@
       "type": "boolean",
       "description": "Gate-less chapters only. Pins this chapter first in the front matter and makes it the book's default landing page. The server overview opts in here."
     },
+    "contents": {
+      "type": "boolean",
+      "description": "Marks this chapter as the contents/index page. It is kept out of the chapter reading flow and tabs, and reached through the Contents tab instead."
+    },
     "sections": {
       "type": "array",
       "minItems": 1,

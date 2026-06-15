@@ -112,8 +112,8 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
     private bool OnContents()
     {
-        var home = library.Default;
-        if (home != null) OpenChapter(home);
+        var target = library.ContentsPage ?? library.Default;
+        if (target != null) OpenChapter(target);
         return true;
     }
 
@@ -124,12 +124,16 @@ public class GuiDialogIlluminatedBook : GuiDialog
         // Size the book to a fraction of the screen. GUI bounds are unscaled
         // units that get multiplied by GUIScale at render, so divide it out.
         double scale = RuntimeEnv.GUIScale <= 0 ? 1 : RuntimeEnv.GUIScale;
-        double targetW = capi.Render.FrameWidth / scale * ScreenFraction;
-        double targetH = capi.Render.FrameHeight / scale * ScreenFraction;
+        // The book fills a fraction of the screen; the dialog is wider so chapter
+        // tabs can hang off the right edge in the margin beyond the book.
+        double bookW = capi.Render.FrameWidth / scale * ScreenFraction;
+        double bookH = capi.Render.FrameHeight / scale * ScreenFraction;
 
         const double pad = 22, gutter = 34, titleBar = 30, btnRow = 34, inset = 16, btnW = 104, btnGap = 6;
-        double pageH = System.Math.Max(140, targetH - titleBar - btnRow - pad * 2);
-        double pageW = System.Math.Max(180, (targetW - gutter - pad * 2) / 2);
+        double rightTab = current != null ? 150 : 0;
+        double dialogW = bookW + rightTab;
+        double pageH = System.Math.Max(140, bookH - titleBar - btnRow - pad * 2);
+        double pageW = System.Math.Max(180, (bookW - gutter - pad * 2) / 2);
         double pageY = titleBar + pad;
         double contentW = pageW - inset * 2;
         double contentH = pageH - inset * 2;
@@ -177,9 +181,10 @@ public class GuiDialogIlluminatedBook : GuiDialog
         int leftIdx = spreadIndex * 2;
         int rightIdx = leftIdx + 1;
 
-        ElementBounds dialogBounds = ElementBounds.Fixed(0, 0, targetW, targetH).WithAlignment(EnumDialogArea.CenterMiddle);
+        ElementBounds dialogBounds = ElementBounds.Fixed(0, 0, dialogW, bookH).WithAlignment(EnumDialogArea.CenterMiddle);
         ElementBounds bgBounds = ElementBounds.Fill;
 
+        ElementBounds titleBarBounds = ElementBounds.Fixed(0, 0, bookW, titleBar);
         ElementBounds leftPanel = ElementBounds.Fixed(pad, pageY, pageW, pageH);
         ElementBounds rightPanel = ElementBounds.Fixed(pad + pageW + gutter, pageY, pageW, pageH);
         ElementBounds leftText = ElementBounds.Fixed(pad + inset, pageY + inset, contentW, contentH);
@@ -189,7 +194,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
         // Left cluster, packed left to right: Contents (when not already there),
         // Back (when there is history), then Previous.
-        bool showContents = library.Default != null && current != library.Default;
+        bool showContents = library.ContentsPage != null && current != library.ContentsPage;
         bool showBack = history.Count > 0;
         int slot = 0;
         ElementBounds Slot() => ElementBounds.Fixed(pad + slot++ * (btnW + btnGap), btnY, btnW, 28);
@@ -198,12 +203,18 @@ public class GuiDialogIlluminatedBook : GuiDialog
         ElementBounds? backBtn = showBack ? Slot() : null;
         ElementBounds prevBtn = Slot();
 
-        ElementBounds pageLabel = ElementBounds.Fixed(targetW / 2 - 130, btnY - 3, 260, 40);
-        ElementBounds nextBtn = ElementBounds.Fixed(targetW - pad - btnW, btnY, btnW, 28);
+        ElementBounds pageLabel = ElementBounds.Fixed(bookW / 2 - 130, btnY - 3, 260, 40);
+        ElementBounds nextBtn = ElementBounds.Fixed(bookW - pad - btnW, btnY, btnW, 28);
 
-        var children = new List<ElementBounds> { leftPanel, rightPanel, leftText, rightText, prevBtn, pageLabel, nextBtn };
+        // Chapter tab ribbons hang off the right edge of the book, into the margin.
+        ElementBounds? tabsBounds = (current != null && rightTab > 0)
+            ? ElementBounds.Fixed(bookW, pageY, rightTab - 6, pageH)
+            : null;
+
+        var children = new List<ElementBounds> { titleBarBounds, leftPanel, rightPanel, leftText, rightText, prevBtn, pageLabel, nextBtn };
         if (contentsBtn != null) children.Add(contentsBtn);
         if (backBtn != null) children.Add(backBtn);
+        if (tabsBounds != null) children.Add(tabsBounds);
         bgBounds.WithChildren(children.ToArray());
 
         int maxSpread = (pages.Count - 1) / 2;
@@ -212,7 +223,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
         var composer = capi.Gui
             .CreateCompo("illuminatedbook", dialogBounds)
             .AddStaticCustomDraw(bgBounds, DrawBoard)
-            .AddDialogTitleBar(title, OnTitleBarClose)
+            .AddDialogTitleBar(title, OnTitleBarClose, null, titleBarBounds)
             .AddStaticCustomDraw(leftPanel, DrawPage)
             .AddStaticCustomDraw(rightPanel, DrawPage)
             .AddRichtext(pages[leftIdx], leftText, "leftpage");
@@ -229,8 +240,23 @@ public class GuiDialogIlluminatedBook : GuiDialog
                 CairoFont.WhiteSmallText(), pageLabel, "pagelabel")
             .AddSmallButton("Next ›", OnNextPage, nextBtn);
 
+        if (tabsBounds != null)
+        {
+            var labels = library.Ordered.Select(p => TruncateTab(library.Title(p))).ToArray();
+            int active = System.Math.Max(0, library.OrderIndex(current));
+            composer.AddInteractiveElement(
+                new GuiElementChapterTabs(capi, tabsBounds, labels, active, OnChapterTab), "chaptertabs");
+        }
+
         SingleComposer = composer.Compose();
     }
+
+    private void OnChapterTab(int index)
+    {
+        if (index >= 0 && index < library.Ordered.Count) OpenChapter(library.Ordered[index]);
+    }
+
+    private static string TruncateTab(string s) => s.Length <= 18 ? s : s.Substring(0, 17) + "…";
 
     /// <summary>
     /// Two readouts: where you are in this chapter, and where you are in the whole
@@ -264,8 +290,11 @@ public class GuiDialogIlluminatedBook : GuiDialog
     /// <summary>Dark leather book board behind both pages.</summary>
     private void DrawBoard(Context ctx, ImageSurface surface, ElementBounds b)
     {
+        // Paint the leather only across the book region; the right margin stays
+        // clear so the tab ribbons read as hanging off the book's edge.
+        double bookWpx = capi.Render.FrameWidth * ScreenFraction;
         ctx.SetSourceRGBA(0.17, 0.11, 0.07, 1);
-        ctx.Rectangle(b.drawX, b.drawY, b.OuterWidth, b.OuterHeight);
+        ctx.Rectangle(b.drawX, b.drawY, bookWpx, b.OuterHeight);
         ctx.Fill();
     }
 
