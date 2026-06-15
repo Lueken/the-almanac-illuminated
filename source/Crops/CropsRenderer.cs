@@ -36,20 +36,47 @@ public static class CropsRenderer
     {
         var comps = new List<RichTextComponentBase>();
 
+        float know = ForagersGambleKnowledge.Progress(capi, e.ProduceCode);
+        bool known = know >= 1f;
+        bool unknown = know <= 0f;
+
+        // Unknown: a masked silhouette card, no facts. Identify it by eating to reveal.
+        if (unknown)
+        {
+            comps.Add(new SilhouetteComponent(capi, 40));
+            comps.Add(new RichTextComponent(capi, MaskedName(e.Kind) + "  ", name));
+            comps.Add(new RichTextComponent(capi, KindLabel(e.Kind) + "\n", muted));
+            comps.Add(new RichTextComponent(capi, "Not yet identified\n", window));
+            comps.Add(new ClearFloatTextComponent(capi, 12));
+            return comps;
+        }
+
+        // Known or learning: real icon, name, and growing facts (nutrition only once known).
         if (e.Produce != null)
             comps.Add(new ItemstackTextComponent(capi, e.Produce, 40, 6, EnumFloat.Left));
 
         string source = e.Vanilla ? "vanilla" : capi.ModLoader.GetMod(e.SourceDomain)?.Info?.Name ?? e.SourceDomain;
         comps.Add(new RichTextComponent(capi, e.DisplayName + "  ", name));
         comps.Add(new RichTextComponent(capi, $"{KindLabel(e.Kind)} · {source}\n", muted));
-        comps.Add(new RichTextComponent(capi, GrowingLine(e) + "\n", body));
+        comps.Add(new RichTextComponent(capi, GrowingLine(e, known) + "\n", body));
 
         string win = homebase != null ? PlantingWindow.Compute(capi, homebase, e).Summary() : "Set a homebase to see planting times";
         comps.Add(new RichTextComponent(capi, win + "\n", window));
 
+        if (!known)
+            comps.Add(new RichTextComponent(capi, $"Learning… {(int)(know * 100)}%\n", muted));
+
         comps.Add(new ClearFloatTextComponent(capi, 12));
         return comps;
     }
+
+    private static string MaskedName(CropKind k) => k switch
+    {
+        CropKind.SeedCrop => "Unknown crop",
+        CropKind.BerryBush => "Unknown berry",
+        CropKind.FruitTree => "Unknown fruit",
+        _ => "Unknown plant",
+    };
 
     private static string KindLabel(CropKind k) => k switch
     {
@@ -59,8 +86,11 @@ public static class CropsRenderer
         _ => "plant",
     };
 
-    /// <summary>The dry facts: temperature tolerance, time to grow, and soil need where it applies.</summary>
-    private static string GrowingLine(CropEntry e)
+    /// <summary>
+    /// The dry facts: temperature tolerance, time to grow, and (only once fully known,
+    /// matching FG hiding nutrition until learned) the soil need.
+    /// </summary>
+    private static string GrowingLine(CropEntry e, bool known)
     {
         var parts = new List<string>();
 
@@ -74,7 +104,7 @@ public static class CropsRenderer
         else if (e.Kind == CropKind.FruitTree && e.TotalGrowthDays > 0)
             parts.Add($"{e.TotalGrowthDays:0}-day fruiting");
 
-        if (e.Kind == CropKind.SeedCrop)
+        if (known && e.Kind == CropKind.SeedCrop)
             parts.Add($"needs {e.Nutrient}");
 
         return string.Join("   ", parts);
