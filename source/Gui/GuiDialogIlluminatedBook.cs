@@ -383,7 +383,8 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
         // Added last so it sits atop the pages: link clicks resolve first, then the
         // corners. It only acts in the bottom-outer corners; elsewhere clicks pass through.
-        corners = new GuiElementPageCorners(capi, cornerBounds, OnTurnComplete, PlayPageTurnSound);
+        corners = new GuiElementPageCorners(capi, cornerBounds, OnTurnComplete, PlayPageTurnSound,
+            forward => forward ? CanGoNext() : CanGoPrev());
         composer.AddInteractiveElement(corners, "pagecorners");
 
         SingleComposer = composer.Compose();

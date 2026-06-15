@@ -17,6 +17,7 @@ public class GuiElementPageCorners : GuiElement
 {
     private readonly Action<bool> onTurnComplete;   // forward?
     private readonly Action onTurnStart;
+    private readonly System.Func<bool, bool> canTurn;      // forward? -> is there a page that way
 
     private readonly int[] flipRight = new int[5];
     private readonly int[] flipLeft = new int[5];
@@ -35,10 +36,11 @@ public class GuiElementPageCorners : GuiElement
 
     public bool Busy => animating;
 
-    public GuiElementPageCorners(ICoreClientAPI capi, ElementBounds bounds, Action<bool> onTurnComplete, Action onTurnStart) : base(capi, bounds)
+    public GuiElementPageCorners(ICoreClientAPI capi, ElementBounds bounds, Action<bool> onTurnComplete, Action onTurnStart, System.Func<bool, bool> canTurn) : base(capi, bounds)
     {
         this.onTurnComplete = onTurnComplete;
         this.onTurnStart = onTurnStart;
+        this.canTurn = canTurn;
     }
 
     public override void ComposeElements(Context ctxStatic, ImageSurface surfaceStatic)
@@ -93,7 +95,9 @@ public class GuiElementPageCorners : GuiElement
         if (animating) { args.Handled = true; return; }
         int c = CornerAt(args.X, args.Y);
         if (c == 0) return;          // not a corner: leave the click for the page beneath
-        StartTurn(c > 0);
+        bool forward = c > 0;
+        if (!canTurn(forward)) return;   // dead end (first/last page): nothing happens
+        StartTurn(forward);
         args.Handled = true;
     }
 
