@@ -19,15 +19,19 @@ Status of the build. The format spec is at `docs/SCHEMA.md` and is open for comm
 - **Tab ribbons hanging off both edges.** The book sits in a wider dialog; the leather paints only the book region so ribbons read as leading off it. Left: Contents, Journal, then passed letters. Right: current letter and those ahead. Custom `GuiElementChapterTabs` draws and hit-tests on either edge (the native vertical tabs hit-test the wrong side and cannot be clicked when right-facing).
 - **A-Z grouped index with a split.** Chapters group by first letter (ignoring a leading "The"); selecting a letter jumps to its first chapter and re-centers the split, the way a thumb-index moves as you read deeper. Only-present letters for now; range-folding (A-E, F-J) when packs grow.
 - **Writable journal.** A file-saved personal notebook: one writing sheet per spread, `Save`, `+ Page` (adds a spread), Prev/Next within it, 3-second debounced auto-save plus save-on-close, persisted to `ModData/almanacilluminated/journal.json`.
+- **Real book-frame art.** The open-book plate (leather board, brackets, clasp, aged pages) from Wanderer's Sketchbook by JeanPierre, used under his modder permission (credited in README), replaces the procedural rectangle. Pages, title, tabs, and footer map onto the art as fractions. Title is a centered running head; Home replaces Back; Esc/Alt+J close.
+- **Page turn.** Click the bottom-outer corner (or it is a no-op at the book ends) to play the five-frame corner flip with a randomized page-turn sound, then swap. Faint `‹ ›` cues mark turnable corners; codex page numbers sit on each footer.
+- **Reader polish.** Symmetric callout padding, air above section headings, breathing room below callouts and before links, gutter tightened.
+- **Crops tab (phases 1–3).** A computed `Crops` tab listing every growable food from the modlist — seed crops, berry bushes, fruit trees — source-flagged vanilla vs mod. Each card shows the produce icon, growing facts, and a planting line computed from the player's bound-spawn climate (the mod is now universal with a server sync channel; surface-sampled). Laid out two columns per page. Foragers Gamble produce codes already align with its knowledge keys.
 
 ## Next
 
-- **Tab and book styling pass (cosmetic).** Pull ribbons snug against the book edge (close the gap), per-tab color/icon to match the Fable mockup, give the journal sheet book character (gutter/center line, margins), and lift the faint title bar. Then the real book-frame art (still a flat dark rectangle), the biggest visual jump.
+- **Crops phase 4 — Foragers Gamble gating.** When FG is loaded, read the player's synced `WatchedAttributes["foragersGamble"]` (`knownFoods`, `knowledgeProgress`) and render unlearned growables as masked silhouettes, revealing progressively. Degrade to full reveal when FG is absent. Minor: `kind · source` wraps in the narrow column — tighten.
 - **A-Z range-folding.** Collapse sparse letter runs into ranges (A-E, F-J) and expand dense letters to singles, so a large pack's index fits the strip without overflow. Replaces only-present once chapter count grows.
 - **In-game author preview.** Watch a guide folder and hot-reload the chapter on change. Real renderer, zero drift.
 - **Navigation and IA, the rest.** Top-edge bookmark ribbons (pin a page), flip-to-search. `handbook://` and external URL links still need their handlers.
-- **The magic (phase 3).** Alt+J materialize animation, sprite page-turn with randomized sounds, speed-ramped flip-to-search, diegetic quest-complete notification.
-- **Integrations (phase 4).** Codex discovery renders as the Journal chapter, Progression Framework binds quest blocks to live state, server bridge sends guide manifests for server-side mods.
+- **More magic.** Alt+J materialize animation, speed-ramped flip-to-search, diegetic quest-complete notification.
+- **Integrations.** Codex discovery renders as the Journal chapter, Progression Framework binds quest blocks to live state, server bridge sends guide manifests for server-side mods.
 
 ## Deferred
 
