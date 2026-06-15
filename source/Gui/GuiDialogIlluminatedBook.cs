@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -30,7 +31,9 @@ public class GuiDialogIlluminatedBook : GuiDialog
     private int spreadIndex;
     private bool pendingOpenAtEnd;
     private bool warnedConflict;
+    private bool journalMode;
     private float lastFrameW, lastFrameH;
+    private double boardLeftPx, boardWpx;   // book-region paint extent, for DrawBoard
     private readonly Stack<string> history = new();
 
     public override string ToggleKeyCombinationCode => HotkeyCode;
@@ -92,8 +95,10 @@ public class GuiDialogIlluminatedBook : GuiDialog
     /// </summary>
     private void OpenChapter(GuidePack target, bool atEnd = false, bool record = true)
     {
-        if (target == current) return;
-        if (record && current?.Id != null) history.Push(current.Id);
+        if (target == current && !journalMode) return;
+        bool wasJournal = journalMode;
+        journalMode = false;
+        if (record && !wasJournal && current?.Id != null && target != current) history.Push(current.Id);
         current = target;
         pages = null;
         spreadIndex = 0;
@@ -110,11 +115,21 @@ public class GuiDialogIlluminatedBook : GuiDialog
         return true;
     }
 
-    private bool OnContents()
+    private void OnContents()
     {
         var target = library.ContentsPage ?? library.Default;
         if (target != null) OpenChapter(target);
-        return true;
+    }
+
+    /// <summary>Open the personal journal. A placeholder page for now; the writable scratchpad comes next.</summary>
+    private void OnJournal()
+    {
+        if (journalMode) return;
+        journalMode = true;
+        pages = null;
+        spreadIndex = 0;
+        PlayPageTurnSound();
+        ComposeSpread();
     }
 
     // --- Composition ------------------------------------------------------
@@ -124,19 +139,24 @@ public class GuiDialogIlluminatedBook : GuiDialog
         // Size the book to a fraction of the screen. GUI bounds are unscaled
         // units that get multiplied by GUIScale at render, so divide it out.
         double scale = RuntimeEnv.GUIScale <= 0 ? 1 : RuntimeEnv.GUIScale;
-        // The book fills a fraction of the screen; the dialog is wider so chapter
-        // tabs can hang off the right edge in the margin beyond the book.
+        // The book fills a fraction of the screen; the dialog is wider so the tab
+        // ribbons can hang off both edges in the margins beyond the book.
         double bookW = capi.Render.FrameWidth / scale * ScreenFraction;
         double bookH = capi.Render.FrameHeight / scale * ScreenFraction;
 
         const double pad = 22, gutter = 34, titleBar = 30, btnRow = 34, inset = 16, btnW = 104, btnGap = 6;
-        double rightTab = current != null ? 150 : 0;
-        double dialogW = bookW + rightTab;
+        bool hasTabs = library.Ordered.Count > 0;
+        double tabMargin = hasTabs ? 150 : 0;
+        double bookX = tabMargin;                 // book region is offset right by the left margin
+        double dialogW = tabMargin + bookW + tabMargin;
         double pageH = System.Math.Max(140, bookH - titleBar - btnRow - pad * 2);
         double pageW = System.Math.Max(180, (bookW - gutter - pad * 2) / 2);
         double pageY = titleBar + pad;
         double contentW = pageW - inset * 2;
         double contentH = pageH - inset * 2;
+
+        boardLeftPx = bookX * scale;
+        boardWpx = bookW * scale;
 
         // The page geometry changed (window resize): the cached pagination is stale.
         if (capi.Render.FrameWidth != lastFrameW || capi.Render.FrameHeight != lastFrameH)
@@ -146,9 +166,12 @@ public class GuiDialogIlluminatedBook : GuiDialog
             lastFrameH = capi.Render.FrameHeight;
         }
 
-        // Paginate every chapter once, against the real page geometry, and cache
-        // it. This powers the whole-book page count and makes revisits instant.
-        if (current != null)
+        // Paginate every chapter once, against the real page geometry, and cache it.
+        if (journalMode)
+        {
+            pages = JournalPlaceholderPages();
+        }
+        else if (current != null)
         {
             if (cache == null)
             {
@@ -184,41 +207,35 @@ public class GuiDialogIlluminatedBook : GuiDialog
         ElementBounds dialogBounds = ElementBounds.Fixed(0, 0, dialogW, bookH).WithAlignment(EnumDialogArea.CenterMiddle);
         ElementBounds bgBounds = ElementBounds.Fill;
 
-        ElementBounds titleBarBounds = ElementBounds.Fixed(0, 0, bookW, titleBar);
-        ElementBounds leftPanel = ElementBounds.Fixed(pad, pageY, pageW, pageH);
-        ElementBounds rightPanel = ElementBounds.Fixed(pad + pageW + gutter, pageY, pageW, pageH);
-        ElementBounds leftText = ElementBounds.Fixed(pad + inset, pageY + inset, contentW, contentH);
-        ElementBounds rightText = ElementBounds.Fixed(pad + pageW + gutter + inset, pageY + inset, contentW, contentH);
+        ElementBounds titleBarBounds = ElementBounds.Fixed(bookX, 0, bookW, titleBar);
+        ElementBounds leftPanel = ElementBounds.Fixed(bookX + pad, pageY, pageW, pageH);
+        ElementBounds rightPanel = ElementBounds.Fixed(bookX + pad + pageW + gutter, pageY, pageW, pageH);
+        ElementBounds leftText = ElementBounds.Fixed(bookX + pad + inset, pageY + inset, contentW, contentH);
+        ElementBounds rightText = ElementBounds.Fixed(bookX + pad + pageW + gutter + inset, pageY + inset, contentW, contentH);
 
         double btnY = pageY + pageH + 6;
-
-        // Left cluster, packed left to right: Contents (when not already there),
-        // Back (when there is history), then Previous.
-        bool showContents = library.ContentsPage != null && current != library.ContentsPage;
         bool showBack = history.Count > 0;
         int slot = 0;
-        ElementBounds Slot() => ElementBounds.Fixed(pad + slot++ * (btnW + btnGap), btnY, btnW, 28);
-
-        ElementBounds? contentsBtn = showContents ? Slot() : null;
+        ElementBounds Slot() => ElementBounds.Fixed(bookX + pad + slot++ * (btnW + btnGap), btnY, btnW, 28);
         ElementBounds? backBtn = showBack ? Slot() : null;
         ElementBounds prevBtn = Slot();
 
-        ElementBounds pageLabel = ElementBounds.Fixed(bookW / 2 - 130, btnY - 3, 260, 40);
-        ElementBounds nextBtn = ElementBounds.Fixed(bookW - pad - btnW, btnY, btnW, 28);
+        ElementBounds pageLabel = ElementBounds.Fixed(bookX + bookW / 2 - 130, btnY - 3, 260, 40);
+        ElementBounds nextBtn = ElementBounds.Fixed(bookX + bookW - pad - btnW, btnY, btnW, 28);
 
-        // Chapter tab ribbons hang off the right edge of the book, into the margin.
-        ElementBounds? tabsBounds = (current != null && rightTab > 0)
-            ? ElementBounds.Fixed(bookW, pageY, rightTab - 6, pageH)
-            : null;
+        // Tab strips hang off both edges. Left: Contents, Journal, then the letters
+        // already passed. Right: the current letter and the ones still ahead.
+        ElementBounds? leftTabs = hasTabs ? ElementBounds.Fixed(0, pageY, tabMargin, pageH) : null;
+        ElementBounds? rightTabs = hasTabs ? ElementBounds.Fixed(bookX + bookW, pageY, tabMargin - 6, pageH) : null;
 
         var children = new List<ElementBounds> { titleBarBounds, leftPanel, rightPanel, leftText, rightText, prevBtn, pageLabel, nextBtn };
-        if (contentsBtn != null) children.Add(contentsBtn);
         if (backBtn != null) children.Add(backBtn);
-        if (tabsBounds != null) children.Add(tabsBounds);
+        if (leftTabs != null) children.Add(leftTabs);
+        if (rightTabs != null) children.Add(rightTabs);
         bgBounds.WithChildren(children.ToArray());
 
         int maxSpread = (pages.Count - 1) / 2;
-        string title = current != null ? library.Title(current) : "The Almanac";
+        string title = journalMode ? "Journal" : (current != null ? library.Title(current) : "The Almanac");
 
         var composer = capi.Gui
             .CreateCompo("illuminatedbook", dialogBounds)
@@ -231,7 +248,6 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (rightIdx < pages.Count)
             composer.AddRichtext(pages[rightIdx], rightText, "rightpage");
 
-        if (showContents) composer.AddSmallButton("⌂ Contents", OnContents, contentsBtn);
         if (showBack) composer.AddSmallButton("◀ Back", OnBack, backBtn);
 
         composer
@@ -240,23 +256,90 @@ public class GuiDialogIlluminatedBook : GuiDialog
                 CairoFont.WhiteSmallText(), pageLabel, "pagelabel")
             .AddSmallButton("Next ›", OnNextPage, nextBtn);
 
-        if (tabsBounds != null)
+        if (hasTabs)
         {
-            var labels = library.Ordered.Select(p => TruncateTab(library.Title(p))).ToArray();
-            int active = System.Math.Max(0, library.OrderIndex(current));
+            BuildTabStrips(out var lLabels, out var lActions, out var lActive,
+                           out var rLabels, out var rActions, out var rActive);
             composer.AddInteractiveElement(
-                new GuiElementChapterTabs(capi, tabsBounds, labels, active, OnChapterTab), "chaptertabs");
+                new GuiElementChapterTabs(capi, leftTabs!, lLabels, lActive, i => lActions[i](), BookTabSide.Left), "lefttabs");
+            composer.AddInteractiveElement(
+                new GuiElementChapterTabs(capi, rightTabs!, rLabels, rActive, i => rActions[i](), BookTabSide.Right), "righttabs");
         }
 
         SingleComposer = composer.Compose();
     }
 
-    private void OnChapterTab(int index)
+    /// <summary>
+    /// Builds the two tab strips. Left holds Contents, Journal, then the letter
+    /// groups already passed; right holds the current letter and those still ahead.
+    /// Each letter jumps to the first chapter under it. Selecting a letter shifts
+    /// the split, the way a thumb-index moves as you read deeper into the book.
+    /// </summary>
+    private void BuildTabStrips(out string[] leftLabels, out List<Action> leftActions, out int leftActive,
+                                out string[] rightLabels, out List<Action> rightActions, out int rightActive)
     {
-        if (index >= 0 && index < library.Ordered.Count) OpenChapter(library.Ordered[index]);
+        var ordered = library.Ordered;
+        var letters = new List<char>();
+        var firstByLetter = new Dictionary<char, int>();
+        for (int i = 0; i < ordered.Count; i++)
+        {
+            char l = LetterOf(library.Title(ordered[i]));
+            if (!firstByLetter.ContainsKey(l)) { firstByLetter[l] = i; letters.Add(l); }
+        }
+        letters.Sort();
+
+        // The split point: the current chapter's letter. Contents/Journal have no
+        // letter, so the whole alphabet sits on the right.
+        char cur = (!journalMode && current != null && library.OrderIndex(current) >= 0)
+            ? LetterOf(library.Title(current)) : '\0';
+
+        var lLabels = new List<string> { "Contents", "Journal" };
+        leftActions = new List<Action> { OnContents, OnJournal };
+        foreach (char l in letters)
+        {
+            if (l >= cur) continue;
+            int idx = firstByLetter[l];
+            lLabels.Add(l.ToString());
+            leftActions.Add(() => OpenChapter(ordered[idx]));
+        }
+        leftLabels = lLabels.ToArray();
+        leftActive = journalMode ? 1 : (current == library.ContentsPage ? 0 : -1);
+
+        var rLabels = new List<string>();
+        rightActions = new List<Action>();
+        foreach (char l in letters)
+        {
+            if (l < cur) continue;
+            int idx = firstByLetter[l];
+            rLabels.Add(l.ToString());
+            rightActions.Add(() => OpenChapter(ordered[idx]));
+        }
+        rightLabels = rLabels.ToArray();
+        rightActive = (cur != '\0') ? rLabels.IndexOf(cur.ToString()) : -1;
     }
 
-    private static string TruncateTab(string s) => s.Length <= 18 ? s : s.Substring(0, 17) + "…";
+    /// <summary>The first letter a chapter indexes under, ignoring a leading "The ".</summary>
+    private static char LetterOf(string title)
+    {
+        string t = title.Trim();
+        if (t.StartsWith("The ", StringComparison.OrdinalIgnoreCase)) t = t.Substring(4);
+        foreach (char c in t) if (char.IsLetter(c)) return char.ToUpperInvariant(c);
+        return '#';
+    }
+
+    /// <summary>One placeholder page for the journal until the writable scratchpad lands.</summary>
+    private List<RichTextComponentBase[]> JournalPlaceholderPages()
+    {
+        double[] ink = { 0.13, 0.09, 0.05, 1 };
+        var heading = CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold).WithColor(ink);
+        var italic = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithSlant(Cairo.FontSlant.Italic).WithColor(ink);
+        var page = new RichTextComponentBase[]
+        {
+            new RichTextComponent(capi, "Journal\n\n", heading),
+            new RichTextComponent(capi, "Your own notes will live here. A writable scratchpad, saved with your world, is coming next.", italic)
+        };
+        return new List<RichTextComponentBase[]> { page };
+    }
 
     /// <summary>
     /// Two readouts: where you are in this chapter, and where you are in the whole
@@ -267,7 +350,9 @@ public class GuiDialogIlluminatedBook : GuiDialog
     {
         // Bright parchment tone: the label sits on the dark leather board, not on a page.
         const string col = "#e8dcc0";
-        if (current == null || cache == null || pages == null)
+        if (journalMode)
+            return $"<font align=\"center\" color=\"{col}\">Journal</font>";
+        if (current == null || cache == null || pages == null || library.OrderIndex(current) < 0)
             return $"<font align=\"center\" color=\"{col}\">Spread {spreadIndex + 1} / {maxSpread + 1}</font>";
 
         int chapterPages = pages.Count;
@@ -290,11 +375,10 @@ public class GuiDialogIlluminatedBook : GuiDialog
     /// <summary>Dark leather book board behind both pages.</summary>
     private void DrawBoard(Context ctx, ImageSurface surface, ElementBounds b)
     {
-        // Paint the leather only across the book region; the right margin stays
-        // clear so the tab ribbons read as hanging off the book's edge.
-        double bookWpx = capi.Render.FrameWidth * ScreenFraction;
+        // Paint the leather only across the book region; the side margins stay
+        // clear so the tab ribbons read as hanging off the book's edges.
         ctx.SetSourceRGBA(0.17, 0.11, 0.07, 1);
-        ctx.Rectangle(b.drawX, b.drawY, bookWpx, b.OuterHeight);
+        ctx.Rectangle(b.drawX + boardLeftPx, b.drawY, boardWpx, b.OuterHeight);
         ctx.Fill();
     }
 
