@@ -164,7 +164,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         // The whole visible library, ordered: the book opens to the overview (or
         // first front matter) and navigates between chapters via internal links.
         library ??= new GuideLibrary(capi, guidePacks);
-        bookDialog ??= new GuiDialogIlluminatedBook(capi, library);
+        bookDialog ??= new GuiDialogIlluminatedBook(capi, library, () => homebasePos, EnsureHomebase);
 
         if (bookDialog.IsOpened()) bookDialog.TryClose();
         else bookDialog.TryOpen();

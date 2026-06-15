@@ -35,6 +35,10 @@ public class GuiDialogIlluminatedBook : GuiDialog
     private bool pendingOpenAtEnd;
     private bool warnedConflict;
     private bool journalMode;
+    private bool cropsMode;
+    private List<RichTextComponentBase[]>? cropsColumns;   // one packed column each; four per spread (two a page)
+    private List<CropEntry>? catalog;
+    private const int CropsColsPerSpread = 4;
     private float lastFrameW, lastFrameH;
     private double boardLeftPx, boardWpx, bookHpx;   // book-region paint extent, for DrawFrame
     private ImageSurface? frameSurface;              // the book art, loaded once per open
@@ -61,9 +65,30 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
     public override string ToggleKeyCombinationCode => HotkeyCode;
 
-    public GuiDialogIlluminatedBook(ICoreClientAPI capi, GuideLibrary library) : base(capi)
+    private readonly System.Func<BlockPos?> getHomebase;
+    private readonly Action<Action> ensureHomebase;
+
+    public GuiDialogIlluminatedBook(ICoreClientAPI capi, GuideLibrary library,
+        System.Func<BlockPos?> getHomebase, Action<Action> ensureHomebase) : base(capi)
     {
         this.library = library;
+        this.getHomebase = getHomebase;
+        this.ensureHomebase = ensureHomebase;
+    }
+
+    /// <summary>Open the Crops tab: a computed catalogue of every growable food, gated and climate-aware.</summary>
+    private void OnCrops()
+    {
+        if (cropsMode) return;
+        ensureHomebase(() =>
+        {
+            cropsMode = true;
+            journalMode = false;
+            cropsColumns = null;
+            spreadIndex = 0;
+            PlayPageTurnSound();
+            ComposeSpread();
+        });
     }
 
     public override void OnGuiOpened()
@@ -118,8 +143,9 @@ public class GuiDialogIlluminatedBook : GuiDialog
     /// </summary>
     private void OpenChapter(GuidePack target, bool atEnd = false, bool silent = false)
     {
-        if (target == current && !journalMode) return;
+        if (target == current && !journalMode && !cropsMode) return;
         journalMode = false;
+        cropsMode = false;
         current = target;
         pages = null;
         spreadIndex = 0;
@@ -133,11 +159,11 @@ public class GuiDialogIlluminatedBook : GuiDialog
     {
         var target = library.Default;
         if (target == null) return true;
-        if (current == target && !journalMode)
+        if (current == target && !journalMode && !cropsMode)
         {
             if (spreadIndex != 0) { spreadIndex = 0; PlayPageTurnSound(); ComposeSpread(); }
         }
-        else OpenChapter(target);
+        else { cropsMode = false; OpenChapter(target); }
         return true;
     }
 
@@ -153,6 +179,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (journalMode) return;
         EnsureJournalLoaded();
         journalMode = true;
+        cropsMode = false;
         pages = null;
         spreadIndex = 0;
         PlayPageTurnSound();
@@ -245,6 +272,10 @@ public class GuiDialogIlluminatedBook : GuiDialog
         double contentW = colW;
         double contentH = colH;
 
+        // The Crops tab splits each page into two narrow columns (four across a spread).
+        double cropsSubGap = colW * 0.06;
+        double cropsSubColW = (colW - cropsSubGap) / 2;
+
         boardLeftPx = bookX * scale;
         boardWpx = bookW * scale;
         bookHpx = bookH * scale;
@@ -253,6 +284,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (capi.Render.FrameWidth != lastFrameW || capi.Render.FrameHeight != lastFrameH)
         {
             cache = null;
+            cropsColumns = null;
             lastFrameW = capi.Render.FrameWidth;
             lastFrameH = capi.Render.FrameHeight;
         }
@@ -266,6 +298,15 @@ public class GuiDialogIlluminatedBook : GuiDialog
             EnsureJournalLoaded();
             spreadCount = System.Math.Max(1, journalSpreads.Count);
             spreadIndex = GameMath.Clamp(spreadIndex, 0, spreadCount - 1);
+        }
+        else if (cropsMode)
+        {
+            catalog ??= CropCatalog.Build(capi);
+            cropsColumns ??= CropsRenderer.RenderPages(capi, catalog, getHomebase(), cropsSubColW, contentH);
+            int maxSpread = System.Math.Max(0, (cropsColumns.Count - 1) / CropsColsPerSpread);
+            spreadIndex = GameMath.Clamp(spreadIndex, 0, maxSpread);
+            if (pendingOpenAtEnd) { spreadIndex = maxSpread; pendingOpenAtEnd = false; }
+            spreadCount = maxSpread + 1;
         }
         else
         {
@@ -312,6 +353,15 @@ public class GuiDialogIlluminatedBook : GuiDialog
         ElementBounds rightText = ElementBounds.Fixed(colRightX, colTopY, colW, colH);
         // Journal: one writing area spanning both pages, across the gutter.
         ElementBounds journalText = ElementBounds.Fixed(colLeftX, colTopY, (colRightX + colW) - colLeftX, colH);
+        // Crops: four narrow columns, two per page.
+        double cropsB = cropsSubColW + cropsSubGap;
+        ElementBounds[] cropsCols =
+        {
+            ElementBounds.Fixed(colLeftX, colTopY, cropsSubColW, colH),
+            ElementBounds.Fixed(colLeftX + cropsB, colTopY, cropsSubColW, colH),
+            ElementBounds.Fixed(colRightX, colTopY, cropsSubColW, colH),
+            ElementBounds.Fixed(colRightX + cropsB, colTopY, cropsSubColW, colH),
+        };
 
         double btnY = bookH + 4;
         int slot = 0;
@@ -330,6 +380,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
         var children = new List<ElementBounds> { titleTextBounds, homeBtn, cornerBounds };
         if (journalMode) children.Add(journalText);
+        else if (cropsMode) children.AddRange(cropsCols);
         else { children.Add(leftText); children.Add(rightText); }
         if (saveBtn != null) children.Add(saveBtn);
         if (addBtn != null) children.Add(addBtn);
@@ -337,7 +388,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (rightTabs != null) children.Add(rightTabs);
         bgBounds.WithChildren(children.ToArray());
 
-        string title = journalMode ? "Journal" : (current != null ? library.Title(current) : "The Almanac");
+        string title = cropsMode ? "Crops" : journalMode ? "Journal" : (current != null ? library.Title(current) : "The Almanac");
 
         var titleFont = CairoFont.WhiteSmallishText()
             .WithFont(FontRegistry.SerifDecorative)
@@ -356,6 +407,13 @@ public class GuiDialogIlluminatedBook : GuiDialog
             var ta = composer.GetTextArea("journaltext");
             ta.Autoheight = false;
             ta.SetMaxHeight((int)colH);
+        }
+        else if (cropsMode)
+        {
+            int baseCol = spreadIndex * CropsColsPerSpread;
+            for (int i = 0; i < CropsColsPerSpread; i++)
+                if (baseCol + i < cropsColumns!.Count)
+                    composer.AddRichtext(cropsColumns[baseCol + i], cropsCols[i], "cropcol" + i);
         }
         else
         {
@@ -407,6 +465,13 @@ public class GuiDialogIlluminatedBook : GuiDialog
             rightPageNum = spreadIndex * 2 + 2;
             return;
         }
+        if (cropsMode)
+        {
+            int total = cropsColumns?.Count ?? 0;
+            leftPageNum = spreadIndex * 2 + 1;
+            rightPageNum = spreadIndex * CropsColsPerSpread + 2 < total ? spreadIndex * 2 + 2 : -1;
+            return;
+        }
         if (current == null || cache == null || pages == null || library.OrderIndex(current) < 0)
         {
             leftPageNum = rightPageNum = -1;
@@ -442,13 +507,13 @@ public class GuiDialogIlluminatedBook : GuiDialog
         }
         letters.Sort();
 
-        // The split point: the current chapter's letter. Contents/Journal have no
-        // letter, so the whole alphabet sits on the right.
-        char cur = (!journalMode && current != null && library.OrderIndex(current) >= 0)
+        // The split point: the current chapter's letter. The fixed tabs (Contents,
+        // Journal, Crops) have no letter, so the whole alphabet sits on the right.
+        char cur = (!journalMode && !cropsMode && current != null && library.OrderIndex(current) >= 0)
             ? LetterOf(library.Title(current)) : '\0';
 
-        var lLabels = new List<string> { "Contents", "Journal" };
-        leftActions = new List<Action> { OnContents, OnJournal };
+        var lLabels = new List<string> { "Contents", "Journal", "Crops" };
+        leftActions = new List<Action> { OnContents, OnJournal, OnCrops };
         foreach (char l in letters)
         {
             if (l >= cur) continue;
@@ -457,7 +522,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
             leftActions.Add(() => OpenChapter(ordered[idx]));
         }
         leftLabels = lLabels.ToArray();
-        leftActive = journalMode ? 1 : (current == library.ContentsPage ? 0 : -1);
+        leftActive = cropsMode ? 2 : journalMode ? 1 : (current == library.ContentsPage ? 0 : -1);
 
         var rLabels = new List<string>();
         rightActions = new List<Action>();
@@ -564,17 +629,20 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (forward) AdvanceNext(); else AdvancePrev();
     }
 
-    private bool CanGoPrev() => journalMode
+    private bool CanGoPrev() => (journalMode || cropsMode)
         ? spreadIndex > 0
         : spreadIndex > 0 || (current != null && library.Prev(current) != null);
 
-    private bool CanGoNext() => journalMode
-        ? spreadIndex + 1 < System.Math.Max(1, journalSpreads.Count)
-        : (pages != null && (spreadIndex + 1) * 2 < pages.Count) || (current != null && library.Next(current) != null);
+    private bool CanGoNext()
+    {
+        if (journalMode) return spreadIndex + 1 < System.Math.Max(1, journalSpreads.Count);
+        if (cropsMode) return cropsColumns != null && (spreadIndex + 1) * CropsColsPerSpread < cropsColumns.Count;
+        return (pages != null && (spreadIndex + 1) * 2 < pages.Count) || (current != null && library.Next(current) != null);
+    }
 
     private void AdvancePrev()
     {
-        if (journalMode)
+        if (journalMode || cropsMode)
         {
             if (spreadIndex > 0) { spreadIndex--; ComposeSpread(); }
             return;
@@ -589,6 +657,11 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (journalMode)
         {
             if (spreadIndex + 1 < System.Math.Max(1, journalSpreads.Count)) { spreadIndex++; ComposeSpread(); }
+            return;
+        }
+        if (cropsMode)
+        {
+            if (cropsColumns != null && (spreadIndex + 1) * CropsColsPerSpread < cropsColumns.Count) { spreadIndex++; ComposeSpread(); }
             return;
         }
         if (pages != null && (spreadIndex + 1) * 2 < pages.Count) { spreadIndex++; ComposeSpread(); }

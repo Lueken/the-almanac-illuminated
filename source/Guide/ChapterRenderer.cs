@@ -172,7 +172,7 @@ public static class ChapterRenderer
     /// dispose the shared child components, and figure and recipe hold native
     /// surfaces the real render still needs.
     /// </summary>
-    private static double MeasureHeight(ICoreClientAPI capi, RichTextComponentBase[] comps, double pageWidth)
+    internal static double MeasureHeight(ICoreClientAPI capi, RichTextComponentBase[] comps, double pageWidth)
     {
         if (comps.Length == 0) return 0;
         var bounds = ElementBounds.Fixed(0, 0, pageWidth, 1_000_000).WithEmptyParent();
