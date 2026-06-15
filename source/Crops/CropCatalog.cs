@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.API.MathTools;
+using Vintagestory.GameContent;
 
 namespace AlmanacIlluminated;
 
@@ -43,23 +45,45 @@ public static class CropCatalog
 {
     public static List<CropEntry> Build(ICoreClientAPI capi)
     {
-        var entries = BuildSeedCrops(capi);
-        // BuildBerryBushes / BuildFruitTrees land next; their props differ from CropProps.
-        entries.Sort((a, b) => string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase));
-        return entries;
+        var entries = new List<CropEntry>();
+        entries.AddRange(BuildSeedCrops(capi));
+        entries.AddRange(BuildBerryBushes(capi));
+        entries.AddRange(BuildFruitTrees(capi));
+
+        // Dedupe on produce: a berry grown by both a small and large bush, or a crop
+        // that also drops as something else, should appear once.
+        var byProduce = new Dictionary<string, CropEntry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in entries)
+            if (!byProduce.ContainsKey(e.ProduceCode)) byProduce[e.ProduceCode] = e;
+
+        var result = byProduce.Values.ToList();
+        result.Sort((a, b) => string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase));
+        return result;
     }
 
-    /// <summary>Logs a one-line summary plus a per-source breakdown, for validating discovery against a pack.</summary>
-    public static void LogSummary(ICoreClientAPI capi, List<CropEntry> entries)
+    /// <summary>
+    /// Logs a one-line summary plus a per-source breakdown, for validating discovery
+    /// against a pack. With a homebase position, also logs each crop's planting window
+    /// computed from that base's climate.
+    /// </summary>
+    public static void LogSummary(ICoreClientAPI capi, List<CropEntry> entries, BlockPos? homebase = null)
     {
+        var byKind = entries.GroupBy(e => e.Kind).Select(g => $"{g.Key} {g.Count()}");
         var bySource = entries.GroupBy(e => e.Vanilla ? "vanilla" : e.SourceDomain)
             .OrderByDescending(g => g.Count())
             .Select(g => $"{g.Key} {g.Count()}");
-        IlluminatedLogger.Info(capi, "crops", $"Catalog: {entries.Count} seed crop(s) — {string.Join(", ", bySource)}");
+        string at = homebase != null ? $" — homebase climate at {homebase}" : "";
+        IlluminatedLogger.Info(capi, "crops",
+            $"Catalog: {entries.Count} growable(s) — by kind: {string.Join(", ", byKind)}; by source: {string.Join(", ", bySource)}{at}");
         foreach (var e in entries)
+        {
+            string cold = float.IsNaN(e.ColdDamageBelow) ? "—" : $"cold<{e.ColdDamageBelow:0.#}";
+            string heat = float.IsNaN(e.HeatDamageAbove) ? "—" : $"heat>{e.HeatDamageAbove:0.#}";
+            string nutrient = e.Kind == CropKind.SeedCrop ? e.Nutrient.ToString() : "—";
+            string window = homebase != null ? "  |  " + PlantingWindow.Compute(capi, homebase, e).Summary() : "";
             IlluminatedLogger.Info(capi, "crops",
-                $"  {e.DisplayName} [{e.SourceDomain}] {e.ProduceCode} — " +
-                $"cold<{e.ColdDamageBelow:0.#} heat>{e.HeatDamageAbove:0.#}, {e.TotalGrowthDays:0.#}d, {e.Nutrient}");
+                $"  [{e.Kind}] {e.DisplayName} [{e.SourceDomain}] {e.ProduceCode} — {cold} {heat}, {e.TotalGrowthDays:0.#}d, {nutrient}{window}");
+        }
     }
 
     private static List<CropEntry> BuildSeedCrops(ICoreClientAPI capi)
@@ -88,7 +112,7 @@ public static class CropCatalog
                 Kind = CropKind.SeedCrop,
                 ProduceCode = produce.Collectible.Code.ToString(),
                 DisplayName = produce.GetName(),
-                SourceDomain = block.Code.Domain,
+                SourceDomain = produce.Collectible.Code.Domain,   // the food's origin, so mod produce flags as modded
                 Produce = produce,
                 Nutrient = cp.RequiredNutrient,
                 ColdDamageBelow = cp.ColdDamageBelow,
@@ -117,7 +141,11 @@ public static class CropCatalog
         return true;
     }
 
-    /// <summary>The food a ripe crop drops: its configured drops minus the seed. First non-seed wins.</summary>
+    /// <summary>
+    /// The food a plant drops: its configured drops minus the seed, the cutting, and
+    /// the plant's own block (an unripe bush drops only itself, so it resolves to null
+    /// and is skipped; a ripe bush drops the berry). First food wins.
+    /// </summary>
     private static ItemStack? ResolveProduce(Block block)
     {
         if (block.Drops == null) return null;
@@ -127,9 +155,78 @@ public static class CropCatalog
             var collCode = stack?.Collectible?.Code?.Path;
             if (stack == null || collCode == null) continue;
             if (collCode.StartsWith("seeds-", StringComparison.OrdinalIgnoreCase) ||
-                collCode.StartsWith("seed-", StringComparison.OrdinalIgnoreCase)) continue;
+                collCode.StartsWith("seed-", StringComparison.OrdinalIgnoreCase) ||
+                collCode.Contains("cutting", StringComparison.OrdinalIgnoreCase) ||
+                collCode.Contains("berrybush", StringComparison.OrdinalIgnoreCase)) continue;
             return stack;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Berry bushes: any block coded "berrybush" at its ripe state. Growing band comes
+    /// from the block attributes the bush's growth check reads (stop-below/above temp);
+    /// the berry is the ripe bush's food drop.
+    /// </summary>
+    private static List<CropEntry> BuildBerryBushes(ICoreClientAPI capi)
+    {
+        var entries = new List<CropEntry>();
+        foreach (var block in capi.World.Blocks)
+        {
+            if (block?.Code == null) continue;
+            if (!block.Code.Path.Contains("berrybush", StringComparison.OrdinalIgnoreCase)) continue;
+            if (block.Variant != null && block.Variant.TryGetValue("state", out var state)
+                && !state.Equals("ripe", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var produce = ResolveProduce(block);
+            if (produce?.Collectible?.Code == null) continue;
+
+            entries.Add(new CropEntry
+            {
+                Kind = CropKind.BerryBush,
+                ProduceCode = produce.Collectible.Code.ToString(),
+                DisplayName = produce.GetName(),
+                SourceDomain = produce.Collectible.Code.Domain,
+                Produce = produce,
+                ColdDamageBelow = block.Attributes?["stopBelowTemperature"].AsFloat(float.NaN) ?? float.NaN,
+                HeatDamageAbove = block.Attributes?["stopAboveTemperature"].AsFloat(float.NaN) ?? float.NaN,
+                MultipleHarvests = true,
+            });
+        }
+        return entries;
+    }
+
+    /// <summary>
+    /// Fruit trees: each type in the branch block's TypeProps. The fruit is the type's
+    /// resolved FruitStacks; cold hardiness is DieBelowTemp (no upper limit), and the
+    /// growth figure sums the flowering, fruiting, and ripening days.
+    /// </summary>
+    private static List<CropEntry> BuildFruitTrees(ICoreClientAPI capi)
+    {
+        var entries = new List<CropEntry>();
+        var branch = capi.World.Blocks.OfType<BlockFruitTreeBranch>().FirstOrDefault(b => b.TypeProps != null);
+        if (branch == null) return entries;
+
+        foreach (var (_, props) in branch.TypeProps)
+        {
+            var produce = props.FruitStacks?
+                .Select(d => d?.ResolvedItemstack)
+                .FirstOrDefault(s => s?.Collectible?.Code != null);
+            if (produce?.Collectible?.Code == null) continue;
+
+            entries.Add(new CropEntry
+            {
+                Kind = CropKind.FruitTree,
+                ProduceCode = produce.Collectible.Code.ToString(),
+                DisplayName = produce.GetName(),
+                SourceDomain = produce.Collectible.Code.Domain,
+                Produce = produce,
+                ColdDamageBelow = props.DieBelowTemp?.avg ?? float.NaN,
+                HeatDamageAbove = float.NaN,   // fruit trees have no modelled heat ceiling
+                TotalGrowthDays = (props.FloweringDays?.avg ?? 0) + (props.FruitingDays?.avg ?? 0) + (props.RipeDays?.avg ?? 0),
+                MultipleHarvests = true,
+            });
+        }
+        return entries;
     }
 }
