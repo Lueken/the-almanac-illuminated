@@ -22,7 +22,7 @@ Status of the build. The format spec is at `docs/SCHEMA.md` and is open for comm
 
 ## Next
 
-- **Tab and book styling pass (cosmetic).** Pull ribbons snug against the book edge (close the gap), per-tab color/icon to match the Fable mockup, give the journal sheet book character (gutter/center line, margins), and lift the faint title bar. Then the real book-frame art (still a flat dark rectangle) — the biggest visual jump.
+- **Tab and book styling pass (cosmetic).** Pull ribbons snug against the book edge (close the gap), per-tab color/icon to match the Fable mockup, give the journal sheet book character (gutter/center line, margins), and lift the faint title bar. Then the real book-frame art (still a flat dark rectangle), the biggest visual jump.
 - **A-Z range-folding.** Collapse sparse letter runs into ranges (A-E, F-J) and expand dense letters to singles, so a large pack's index fits the strip without overflow. Replaces only-present once chapter count grows.
 - **In-game author preview.** Watch a guide folder and hot-reload the chapter on change. Real renderer, zero drift.
 - **Navigation and IA, the rest.** Top-edge bookmark ribbons (pin a page), flip-to-search. `handbook://` and external URL links still need their handlers.
