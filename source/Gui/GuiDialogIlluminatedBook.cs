@@ -14,9 +14,10 @@ namespace AlmanacIlluminated;
 
 /// <summary>
 /// The open book. A two-page parchment spread of one chapter at a time, with
-/// page turning, chapter-to-chapter navigation through internal links, a back
-/// history, and a jump to the contents/overview. The book opens to the overview
-/// when one exists. Frame art and the page-flip animation arrive in later phases.
+/// page turning, chapter-to-chapter navigation through internal links, a Home
+/// button to the landing page, and a jump to the contents/overview. The book
+/// opens to the overview when one exists. Frame art and the page-flip animation
+/// arrive in later phases.
 /// </summary>
 public class GuiDialogIlluminatedBook : GuiDialog
 {
@@ -35,8 +36,20 @@ public class GuiDialogIlluminatedBook : GuiDialog
     private bool warnedConflict;
     private bool journalMode;
     private float lastFrameW, lastFrameH;
-    private double boardLeftPx, boardWpx;   // book-region paint extent, for DrawBoard
-    private readonly Stack<string> history = new();
+    private double boardLeftPx, boardWpx, bookHpx;   // book-region paint extent, for DrawFrame
+    private ImageSurface? frameSurface;              // the book art, loaded once per open
+    private int soundCounter;                        // rotates the three page-turn sounds
+    private int leftPageNum = -1, rightPageNum = -1;  // codex footer numbers, -1 hides one
+    private GuiElementPageCorners? corners;          // the page-turn animation overlay
+
+    // The book art is a fixed-aspect plate; pages and margins are mapped onto it as
+    // fractions of the frame (tuned to bookframe.png, from Wanderer's Sketchbook).
+    private const double FrameAspect = 876.0 / 590.0;
+    private const double FxTitleY = 0.05;
+    private const double FxContentTop = 0.12, FxContentBottom = 0.87;
+    private const double FxLeftL = 0.075, FxLeftR = 0.478;
+    private const double FxRightL = 0.522, FxRightR = 0.925;
+    private static readonly AssetLocation FrameAsset = new("almanacilluminated:textures/gui/bookframe.png");
 
     // The journal: one writable text block per spread, saved to a single file.
     private List<string> journalSpreads = new();
@@ -99,29 +112,32 @@ public class GuiDialogIlluminatedBook : GuiDialog
     }
 
     /// <summary>
-    /// Switch chapters. A link jump records the origin for Back; sequential paging
-    /// across a chapter boundary does not. atEnd opens on the chapter's last spread,
-    /// for paging backwards into the previous chapter.
+    /// Switch chapters. atEnd opens on the chapter's last spread, for paging
+    /// backwards into the previous chapter. silent skips the page-turn sound, used
+    /// when a flip animation already played it.
     /// </summary>
-    private void OpenChapter(GuidePack target, bool atEnd = false, bool record = true)
+    private void OpenChapter(GuidePack target, bool atEnd = false, bool silent = false)
     {
         if (target == current && !journalMode) return;
-        bool wasJournal = journalMode;
         journalMode = false;
-        if (record && !wasJournal && current?.Id != null && target != current) history.Push(current.Id);
         current = target;
         pages = null;
         spreadIndex = 0;
         pendingOpenAtEnd = atEnd;
-        PlayPageTurnSound();
+        if (!silent) PlayPageTurnSound();
         ComposeSpread();
     }
 
-    private bool OnBack()
+    /// <summary>Return to the front of the book: the landing page, first spread.</summary>
+    private bool OnHome()
     {
-        if (history.Count == 0) return true;
-        var target = library.ById(history.Pop());
-        if (target != null) OpenChapter(target, record: false);
+        var target = library.Default;
+        if (target == null) return true;
+        if (current == target && !journalMode)
+        {
+            if (spreadIndex != 0) { spreadIndex = 0; PlayPageTurnSound(); ComposeSpread(); }
+        }
+        else OpenChapter(target);
         return true;
     }
 
@@ -205,24 +221,33 @@ public class GuiDialogIlluminatedBook : GuiDialog
         // Size the book to a fraction of the screen. GUI bounds are unscaled
         // units that get multiplied by GUIScale at render, so divide it out.
         double scale = RuntimeEnv.GUIScale <= 0 ? 1 : RuntimeEnv.GUIScale;
-        // The book fills a fraction of the screen; the dialog is wider so the tab
-        // ribbons can hang off both edges in the margins beyond the book.
-        double bookW = capi.Render.FrameWidth / scale * ScreenFraction;
-        double bookH = capi.Render.FrameHeight / scale * ScreenFraction;
+        // The book is the frame art at its fixed aspect, fit inside a fraction of
+        // the screen. The dialog is wider so the tab ribbons hang off both edges.
+        double availW = capi.Render.FrameWidth / scale * ScreenFraction;
+        double availH = capi.Render.FrameHeight / scale * ScreenFraction;
+        double bookW, bookH;
+        if (availW / availH > FrameAspect) { bookH = availH; bookW = bookH * FrameAspect; }
+        else { bookW = availW; bookH = bookW / FrameAspect; }
 
-        const double pad = 22, gutter = 34, titleBar = 30, btnRow = 34, inset = 16, btnW = 104, btnGap = 6;
+        const double btnRow = 38, btnW = 104, btnGap = 6;
         bool hasTabs = library.Ordered.Count > 0;
         double tabMargin = hasTabs ? 150 : 0;
         double bookX = tabMargin;                 // book region is offset right by the left margin
         double dialogW = tabMargin + bookW + tabMargin;
-        double pageH = System.Math.Max(140, bookH - titleBar - btnRow - pad * 2);
-        double pageW = System.Math.Max(180, (bookW - gutter - pad * 2) / 2);
-        double pageY = titleBar + pad;
-        double contentW = pageW - inset * 2;
-        double contentH = pageH - inset * 2;
+        double dialogH = bookH + btnRow;
+
+        // Page text columns, mapped onto the frame art as fractions of the book.
+        double colLeftX = bookX + FxLeftL * bookW;
+        double colRightX = bookX + FxRightL * bookW;
+        double colW = (FxLeftR - FxLeftL) * bookW;
+        double colTopY = FxContentTop * bookH;
+        double colH = (FxContentBottom - FxContentTop) * bookH;
+        double contentW = colW;
+        double contentH = colH;
 
         boardLeftPx = bookX * scale;
         boardWpx = bookW * scale;
+        bookHpx = bookH * scale;
 
         // The page geometry changed (window resize): the cached pagination is stale.
         if (capi.Render.FrameWidth != lastFrameW || capi.Render.FrameHeight != lastFrameH)
@@ -276,84 +301,75 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
         int leftIdx = spreadIndex * 2;
         int rightIdx = leftIdx + 1;
+        ComputeFooterNumbers(leftIdx, rightIdx);
 
-        ElementBounds dialogBounds = ElementBounds.Fixed(0, 0, dialogW, bookH).WithAlignment(EnumDialogArea.CenterMiddle);
+        ElementBounds dialogBounds = ElementBounds.Fixed(0, 0, dialogW, dialogH).WithAlignment(EnumDialogArea.CenterMiddle);
         ElementBounds bgBounds = ElementBounds.Fill;
 
-        ElementBounds titleBarBounds = ElementBounds.Fixed(bookX, 0, bookW, titleBar);
-        ElementBounds leftPanel = ElementBounds.Fixed(bookX + pad, pageY, pageW, pageH);
-        ElementBounds rightPanel = ElementBounds.Fixed(bookX + pad + pageW + gutter, pageY, pageW, pageH);
-        ElementBounds leftText = ElementBounds.Fixed(bookX + pad + inset, pageY + inset, contentW, contentH);
-        ElementBounds rightText = ElementBounds.Fixed(bookX + pad + pageW + gutter + inset, pageY + inset, contentW, contentH);
-        // Journal: one continuous sheet and one writing area across the whole spread.
-        ElementBounds spreadPanel = ElementBounds.Fixed(bookX + pad, pageY, pageW * 2 + gutter, pageH);
-        ElementBounds journalText = ElementBounds.Fixed(bookX + pad + inset, pageY + inset, pageW * 2 + gutter - inset * 2, pageH - inset * 2);
+        // Title sits as a running head across the top of the open book, in ink.
+        ElementBounds titleTextBounds = ElementBounds.Fixed(colLeftX, FxTitleY * bookH, (colRightX + colW) - colLeftX, 0.06 * bookH);
+        ElementBounds leftText = ElementBounds.Fixed(colLeftX, colTopY, colW, colH);
+        ElementBounds rightText = ElementBounds.Fixed(colRightX, colTopY, colW, colH);
+        // Journal: one writing area spanning both pages, across the gutter.
+        ElementBounds journalText = ElementBounds.Fixed(colLeftX, colTopY, (colRightX + colW) - colLeftX, colH);
 
-        double btnY = pageY + pageH + 6;
-        bool showBack = !journalMode && history.Count > 0;
+        double btnY = bookH + 4;
         int slot = 0;
-        ElementBounds Slot() => ElementBounds.Fixed(bookX + pad + slot++ * (btnW + btnGap), btnY, btnW, 28);
-        ElementBounds? backBtn = showBack ? Slot() : null;
+        ElementBounds Slot() => ElementBounds.Fixed(colLeftX + slot++ * (btnW + btnGap), btnY, btnW, 28);
+        ElementBounds homeBtn = Slot();
         ElementBounds? saveBtn = journalMode ? Slot() : null;
         ElementBounds? addBtn = journalMode ? Slot() : null;
-        ElementBounds prevBtn = Slot();
 
-        ElementBounds pageLabel = ElementBounds.Fixed(bookX + bookW / 2 - 130, btnY - 3, 260, 40);
-        ElementBounds nextBtn = ElementBounds.Fixed(bookX + bookW - pad - btnW, btnY, btnW, 28);
+        // The page-turn overlay covers the whole book; it acts only in the corners.
+        ElementBounds cornerBounds = ElementBounds.Fixed(bookX, 0, bookW, bookH);
 
         // Tab strips hang off both edges. Left: Contents, Journal, then the letters
         // already passed. Right: the current letter and the ones still ahead.
-        ElementBounds? leftTabs = hasTabs ? ElementBounds.Fixed(0, pageY, tabMargin, pageH) : null;
-        ElementBounds? rightTabs = hasTabs ? ElementBounds.Fixed(bookX + bookW, pageY, tabMargin - 6, pageH) : null;
+        ElementBounds? leftTabs = hasTabs ? ElementBounds.Fixed(0, colTopY, tabMargin, colH) : null;
+        ElementBounds? rightTabs = hasTabs ? ElementBounds.Fixed(bookX + bookW, colTopY, tabMargin - 6, colH) : null;
 
-        var children = new List<ElementBounds> { titleBarBounds, prevBtn, pageLabel, nextBtn };
-        if (journalMode) { children.Add(spreadPanel); children.Add(journalText); }
-        else { children.Add(leftPanel); children.Add(rightPanel); children.Add(leftText); children.Add(rightText); }
-        if (backBtn != null) children.Add(backBtn);
+        var children = new List<ElementBounds> { titleTextBounds, homeBtn, cornerBounds };
+        if (journalMode) children.Add(journalText);
+        else { children.Add(leftText); children.Add(rightText); }
         if (saveBtn != null) children.Add(saveBtn);
         if (addBtn != null) children.Add(addBtn);
         if (leftTabs != null) children.Add(leftTabs);
         if (rightTabs != null) children.Add(rightTabs);
         bgBounds.WithChildren(children.ToArray());
 
-        int maxSpread = spreadCount - 1;
         string title = journalMode ? "Journal" : (current != null ? library.Title(current) : "The Almanac");
+
+        var titleFont = CairoFont.WhiteSmallishText()
+            .WithFont(FontRegistry.SerifDecorative)
+            .WithColor(new[] { 0.28, 0.18, 0.10, 1.0 })
+            .WithOrientation(EnumTextOrientation.Center);
 
         var composer = capi.Gui
             .CreateCompo("illuminatedbook", dialogBounds)
-            .AddStaticCustomDraw(bgBounds, DrawBoard)
-            .AddDialogTitleBar(title, OnTitleBarClose, null, titleBarBounds);
+            .AddStaticCustomDraw(bgBounds, DrawFrame)
+            .AddStaticText(title, titleFont, titleTextBounds);
 
         if (journalMode)
         {
             var journalFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithColor(new[] { 0.13, 0.09, 0.05, 1.0 });
-            composer.AddStaticCustomDraw(spreadPanel, DrawPage)
-                    .AddTextArea(journalText, OnJournalTextChanged, journalFont, "journaltext");
+            composer.AddTextArea(journalText, OnJournalTextChanged, journalFont, "journaltext");
             var ta = composer.GetTextArea("journaltext");
             ta.Autoheight = false;
-            ta.SetMaxHeight((int)(pageH - inset * 2));
+            ta.SetMaxHeight((int)colH);
         }
         else
         {
-            composer.AddStaticCustomDraw(leftPanel, DrawPage)
-                    .AddStaticCustomDraw(rightPanel, DrawPage)
-                    .AddRichtext(pages![leftIdx], leftText, "leftpage");
+            composer.AddRichtext(pages![leftIdx], leftText, "leftpage");
             if (rightIdx < pages.Count)
                 composer.AddRichtext(pages[rightIdx], rightText, "rightpage");
         }
 
-        if (showBack) composer.AddSmallButton("◀ Back", OnBack, backBtn);
+        composer.AddSmallButton("⌂ Home", OnHome, homeBtn);
         if (journalMode)
         {
             composer.AddSmallButton("Save", OnJournalSave, saveBtn);
             composer.AddSmallButton("+ Page", OnJournalAddPage, addBtn);
         }
-
-        composer
-            .AddSmallButton("‹ Prev", OnPrevPage, prevBtn)
-            .AddRichtext(journalMode ? JournalLabel(spreadCount) : PageLabel(leftIdx, rightIdx, maxSpread),
-                CairoFont.WhiteSmallText(), pageLabel, "pagelabel")
-            .AddSmallButton("Next ›", OnNextPage, nextBtn);
 
         if (hasTabs)
         {
@@ -365,16 +381,45 @@ public class GuiDialogIlluminatedBook : GuiDialog
                 new GuiElementChapterTabs(capi, rightTabs!, rLabels, rActive, i => rActions[i](), BookTabSide.Right), "righttabs");
         }
 
+        // Added last so it sits atop the pages: link clicks resolve first, then the
+        // corners. It only acts in the bottom-outer corners; elsewhere clicks pass through.
+        corners = new GuiElementPageCorners(capi, cornerBounds, OnTurnComplete, PlayPageTurnSound);
+        composer.AddInteractiveElement(corners, "pagecorners");
+
         SingleComposer = composer.Compose();
 
         if (journalMode)
             SingleComposer.GetTextArea("journaltext")?.SetValue(journalSpreads[spreadIndex], false);
     }
 
-    private string JournalLabel(int spreadCount)
+    /// <summary>
+    /// Sets the two footer page numbers for the current spread. The journal numbers
+    /// its own sheets; a chapter numbers across the whole book, so flipping through
+    /// reads like one continuous codex. A blank right page (odd last page) hides its
+    /// number, as does the mock chapter, which has no library to count against.
+    /// </summary>
+    private void ComputeFooterNumbers(int leftIdx, int rightIdx)
     {
-        int l = spreadIndex * 2 + 1, r = spreadIndex * 2 + 2;
-        return $"<font align=\"center\" color=\"#e8dcc0\">Journal  pages {l}–{r} / {spreadCount * 2}</font>";
+        if (journalMode)
+        {
+            leftPageNum = spreadIndex * 2 + 1;
+            rightPageNum = spreadIndex * 2 + 2;
+            return;
+        }
+        if (current == null || cache == null || pages == null || library.OrderIndex(current) < 0)
+        {
+            leftPageNum = rightPageNum = -1;
+            return;
+        }
+
+        int prior = 0;
+        foreach (var ch in library.Ordered)
+        {
+            if (ch == current) { break; }
+            prior += cache.TryGetValue(ch, out var cp) ? cp.Count : 0;
+        }
+        leftPageNum = prior + leftIdx + 1;
+        rightPageNum = rightIdx < pages.Count ? prior + leftIdx + 2 : -1;
     }
 
     /// <summary>
@@ -436,107 +481,139 @@ public class GuiDialogIlluminatedBook : GuiDialog
     }
 
     /// <summary>
-    /// Two readouts: where you are in this chapter, and where you are in the whole
-    /// book. Pages count the parchment sides, so a spread shows a range like p. 3-4.
-    /// Falls back to a spread count for the mock chapter, which has no library.
+    /// The open-book art (leather board, brackets, and both parchment pages),
+    /// scaled to the book region. Margins outside it stay clear so the tab ribbons
+    /// read as hanging off the edges. Falls back to a flat leather rect if the art
+    /// will not load. Art: Wanderer's Sketchbook by JeanPierre, used by permission.
     /// </summary>
-    private string PageLabel(int leftIdx, int rightIdx, int maxSpread)
+    private void DrawFrame(Context ctx, ImageSurface surface, ElementBounds b)
     {
-        // Bright parchment tone: the label sits on the dark leather board, not on a page.
-        const string col = "#e8dcc0";
-        if (journalMode)
-            return $"<font align=\"center\" color=\"{col}\">Journal</font>";
-        if (current == null || cache == null || pages == null || library.OrderIndex(current) < 0)
-            return $"<font align=\"center\" color=\"{col}\">Spread {spreadIndex + 1} / {maxSpread + 1}</font>";
+        frameSurface ??= TryLoadFrame();
+        double dx = b.drawX + boardLeftPx, dy = b.drawY, dw = boardWpx, dh = bookHpx;
 
-        int chapterPages = pages.Count;
-        int leftPage = leftIdx + 1;
-        int rightPage = rightIdx < chapterPages ? leftIdx + 2 : leftPage;
-
-        int total = 0, prior = 0;
-        foreach (var ch in library.Ordered)
+        if (frameSurface == null)
         {
-            if (ch == current) prior = total;
-            total += cache.TryGetValue(ch, out var cp) ? cp.Count : 0;
+            ctx.SetSourceRGBA(0.17, 0.11, 0.07, 1);
+            ctx.Rectangle(dx, dy, dw, dh);
+            ctx.Fill();
+            return;
         }
 
-        string Span(int l, int r) => l == r ? $"p. {l}" : $"p. {l}–{r}";
-        string chap = $"This chapter  {Span(leftPage, rightPage)} / {chapterPages}";
-        string book = $"Whole book  {Span(prior + leftPage, prior + rightPage)} / {total}";
-        return $"<font align=\"center\" color=\"{col}\">{chap}\n{book}</font>";
-    }
-
-    /// <summary>Dark leather book board behind both pages.</summary>
-    private void DrawBoard(Context ctx, ImageSurface surface, ElementBounds b)
-    {
-        // Paint the leather only across the book region; the side margins stay
-        // clear so the tab ribbons read as hanging off the book's edges.
-        ctx.SetSourceRGBA(0.17, 0.11, 0.07, 1);
-        ctx.Rectangle(b.drawX + boardLeftPx, b.drawY, boardWpx, b.OuterHeight);
+        ctx.Save();
+        var pattern = new SurfacePattern(frameSurface);
+        var m = new Matrix();
+        m.Scale(frameSurface.Width / dw, frameSurface.Height / dh);
+        m.Translate(-dx, -dy);
+        pattern.Matrix = m;
+        pattern.Filter = Filter.Best;
+        ctx.SetSource(pattern);
+        ctx.Rectangle(dx, dy, dw, dh);
         ctx.Fill();
+        ctx.Restore();
+        pattern.Dispose();
+
+        DrawFooterNumbers(ctx, dx, dy);
     }
 
-    /// <summary>A cream parchment page panel.</summary>
-    private void DrawPage(Context ctx, ImageSurface surface, ElementBounds b)
+    /// <summary>
+    /// Codex page numbers in each page's footer, with a faint sepia rule above, as
+    /// fractions of the book plate. Bare numerals, lighter than body ink, the way a
+    /// printed folio sets its page number.
+    /// </summary>
+    private void DrawFooterNumbers(Context ctx, double bookDrawX, double bookDrawY)
     {
-        ctx.SetSourceRGBA(0.93, 0.88, 0.76, 1);
-        ctx.Rectangle(b.drawX, b.drawY, b.OuterWidth, b.OuterHeight);
-        ctx.Fill();
+        double X(double f) => bookDrawX + f * boardWpx;
+        double Y(double f) => bookDrawY + f * bookHpx;
+
+        const double ruleY = 0.885, numY = 0.905;
+
+        ctx.LineWidth = GuiElement.scaled(0.7);
+        ctx.SetSourceRGBA(0.28, 0.18, 0.10, 0.35);
+        if (leftPageNum > 0) { ctx.NewPath(); ctx.MoveTo(X(FxLeftL), Y(ruleY)); ctx.LineTo(X(FxLeftR), Y(ruleY)); ctx.Stroke(); }
+        if (rightPageNum > 0) { ctx.NewPath(); ctx.MoveTo(X(FxRightL), Y(ruleY)); ctx.LineTo(X(FxRightR), Y(ruleY)); ctx.Stroke(); }
+
+        void Glyph(CairoFont f, string g, double cx, double cy)
+        {
+            f.SetupContext(ctx);
+            var te = ctx.TextExtents(g);
+            ctx.NewPath();
+            ctx.MoveTo(X(cx) - (te.Width / 2 + te.XBearing), Y(cy));
+            ctx.ShowText(g);
+        }
+
+        var numFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithFontSize(13f).WithColor(new[] { 0.28, 0.18, 0.10, 0.70 });
+        if (leftPageNum > 0) Glyph(numFont, leftPageNum.ToString(), (FxLeftL + FxLeftR) / 2, numY);
+        if (rightPageNum > 0) Glyph(numFont, rightPageNum.ToString(), (FxRightL + FxRightR) / 2, numY);
+
+        // Faint turn cues in the bottom-outer corners, only where a turn exists.
+        var cueFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithFontSize(20f).WithColor(new[] { 0.28, 0.18, 0.10, 0.28 });
+        if (CanGoPrev()) Glyph(cueFont, "‹", FxLeftL + 0.01, numY);
+        if (CanGoNext()) Glyph(cueFont, "›", FxRightR - 0.01, numY);
     }
 
-    private bool OnPrevPage()
+    private ImageSurface? TryLoadFrame()
+    {
+        try { return GuiElement.getImageSurfaceFromAsset(capi, FrameAsset); }
+        catch (Exception e) { IlluminatedLogger.Warn(capi, "book", $"Book frame art failed to load: {e.Message}"); return null; }
+    }
+
+    /// <summary>The flip animation landed: swap the spread (silently, the turn already sounded).</summary>
+    private void OnTurnComplete(bool forward)
+    {
+        if (forward) AdvanceNext(); else AdvancePrev();
+    }
+
+    private bool CanGoPrev() => journalMode
+        ? spreadIndex > 0
+        : spreadIndex > 0 || (current != null && library.Prev(current) != null);
+
+    private bool CanGoNext() => journalMode
+        ? spreadIndex + 1 < System.Math.Max(1, journalSpreads.Count)
+        : (pages != null && (spreadIndex + 1) * 2 < pages.Count) || (current != null && library.Next(current) != null);
+
+    private void AdvancePrev()
     {
         if (journalMode)
         {
-            if (spreadIndex > 0) { spreadIndex--; PlayPageTurnSound(); ComposeSpread(); }
-            return true;
+            if (spreadIndex > 0) { spreadIndex--; ComposeSpread(); }
+            return;
         }
-        if (spreadIndex > 0)
-        {
-            spreadIndex--;
-            PlayPageTurnSound();
-            ComposeSpread();
-        }
+        if (spreadIndex > 0) { spreadIndex--; ComposeSpread(); }
         else if (current != null && library.Prev(current) is GuidePack prev)
-        {
-            // Off the front of this chapter: into the back of the previous one.
-            OpenChapter(prev, atEnd: true, record: false);
-        }
-        return true;
+            OpenChapter(prev, atEnd: true, silent: true);   // off the front: into the previous chapter's back
     }
 
-    private bool OnNextPage()
+    private void AdvanceNext()
     {
         if (journalMode)
         {
-            if (spreadIndex + 1 < System.Math.Max(1, journalSpreads.Count)) { spreadIndex++; PlayPageTurnSound(); ComposeSpread(); }
-            return true;
+            if (spreadIndex + 1 < System.Math.Max(1, journalSpreads.Count)) { spreadIndex++; ComposeSpread(); }
+            return;
         }
-        if (pages != null && (spreadIndex + 1) * 2 < pages.Count)
-        {
-            spreadIndex++;
-            PlayPageTurnSound();
-            ComposeSpread();
-        }
+        if (pages != null && (spreadIndex + 1) * 2 < pages.Count) { spreadIndex++; ComposeSpread(); }
         else if (current != null && library.Next(current) is GuidePack next)
-        {
-            // Off the end of this chapter: into the next one. The book reads straight through.
-            OpenChapter(next, atEnd: false, record: false);
-        }
-        return true;
+            OpenChapter(next, atEnd: false, silent: true);   // off the end: into the next chapter
     }
 
+    /// <summary>One of the three parchment page-turn sounds, rotated so a run of turns varies.</summary>
     private void PlayPageTurnSound()
     {
-        capi.World.PlaySoundAt(new AssetLocation("game:sounds/effect/writing"),
+        int n = soundCounter++ % 3 + 1;
+        capi.World.PlaySoundAt(new AssetLocation($"almanacilluminated:sounds/pageturn{n}"),
             capi.World.Player.Entity, null, true, 8);
     }
 
-    private void OnTitleBarClose() => TryClose();
+    public override void OnKeyDown(KeyEvent args)
+    {
+        base.OnKeyDown(args);
+        if (!args.Handled && args.KeyCode == (int)GlKeys.Escape) { TryClose(); args.Handled = true; }
+    }
 
     public override void OnGuiClosed()
     {
         if (journalDirty) SaveJournal();
+        frameSurface?.Dispose();
+        frameSurface = null;
         base.OnGuiClosed();
     }
 

@@ -39,3 +39,7 @@ Run `dotnet build`. The first run generates `Properties/localSettings.props`, so
 ## Fonts
 
 The book reads in Lora and Almendra, the serifs the game already ships. Josefin Sans and Odibee Sans are bundled under the SIL Open Font License (see `resources/assets/almanacilluminated/fonts/licenses/`) and held in reserve for accents.
+
+## Credits
+
+The open-book frame art, the page-flip frames, and the page-turn sounds (`textures/gui/bookframe.png`, `textures/gui/flip/`, `sounds/pageturn*.ogg`) are from **Wanderer's Sketchbook** by **JeanPierre**, used with the author's blanket permission for modders ("Feel free and most welcome to modify or to use any of the assets from the mod!", stated on the mod's page).

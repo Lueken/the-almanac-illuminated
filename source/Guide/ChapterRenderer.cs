@@ -19,6 +19,10 @@ public static class ChapterRenderer
     // Dark ink, for reading on parchment.
     private static readonly double[] Ink = { 0.13, 0.09, 0.05, 1 };
 
+    // Air above a section heading so it reads as a fresh section, never crowding the
+    // paragraph before it. Kept tight below (the heading bonds to its first line).
+    private const float HeadingTopMargin = 16;
+
     /// <summary>
     /// Renders a chapter into book pages. Every block is laid out and measured at
     /// the page width, then blocks are packed into page-height columns. A section
@@ -59,7 +63,7 @@ public static class ChapterRenderer
             var title = new List<RichTextComponentBase>();
             string? secTitle = GuideLibrary.Localize(sec.Title);
             if (!string.IsNullOrEmpty(secTitle))
-                title.Add(new RichTextComponent(capi, secTitle + "\n", heading));
+                title.Add(new RichTextComponent(capi, secTitle + "\n", heading) { UnscaledMarginTop = HeadingTopMargin });
 
             var blockLists = new List<List<RichTextComponentBase>>();
             foreach (var block in sec.Blocks)
@@ -217,7 +221,8 @@ public static class ChapterRenderer
 
             case "heading":
                 comps.Add(new RichTextComponent(capi, (block.Str("text") ?? "") + "\n",
-                    CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink)));
+                    CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink))
+                    { UnscaledMarginTop = HeadingTopMargin });
                 break;
 
             case "paragraph":
@@ -299,7 +304,9 @@ public static class ChapterRenderer
             {
                 string to = block.Str("to") ?? "";
                 string text = block.Str("text") ?? to;
-                comps.AddRange(VtmlUtil.Richtextify(capi, $"<a href=\"{to}\">{text}</a>\n", body, onLink));
+                var parts = VtmlUtil.Richtextify(capi, $"<a href=\"{to}\">{text}</a>\n", body, onLink);
+                if (parts.Length > 0) parts[0].UnscaledMarginTop = 8;   // clear the block above (often a callout)
+                comps.AddRange(parts);
                 break;
             }
 
