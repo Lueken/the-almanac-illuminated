@@ -14,7 +14,7 @@
     <ModVersion>0.0.1-dev</ModVersion>
     <ModId>almanacilluminated</ModId>
     <Description>A living questbook for the modded world. Pull the Almanac from your back pocket: chapters of guides authored by mod creators, appearing only for the mods you have loaded, with bookmarks, search, and tracked objectives. Phase 0 renderer spike.</Description>
-    <Side>client</Side>
+    <Side>universal</Side>
     <RequiredOnClient>false</RequiredOnClient>
     <RequiredOnServer>false</RequiredOnServer>
   </PropertyGroup>
