@@ -61,7 +61,22 @@ public class AlmanacIlluminatedModSystem : ModSystem
             GlKeys.J, HotkeyType.GUIOrOtherControls, altPressed: true);
         api.Input.SetHotKeyHandler(GuiDialogIlluminatedBook.HotkeyCode, OnToggleBook);
 
+        // Crops-tab phase 1: a dev command to validate crop discovery against a pack.
+        api.ChatCommands.Create("almcrops")
+            .WithDescription("List the growable crops the Almanac discovered (logs detail to the client log)")
+            .HandleWith(OnCropsCommand);
+
         IlluminatedLogger.Info(api, "startup", "Illuminated Phase 0 spike loaded — Alt+J opens the book");
+    }
+
+    private TextCommandResult OnCropsCommand(TextCommandCallingArgs args)
+    {
+        if (capi == null) return TextCommandResult.Error("Client API unavailable");
+        var entries = CropCatalog.Build(capi);
+        CropCatalog.LogSummary(capi, entries);
+        int vanilla = entries.Count(e => e.Vanilla);
+        return TextCommandResult.Success(
+            $"Almanac discovered {entries.Count} seed crop(s): {vanilla} vanilla, {entries.Count - vanilla} modded. Details in the client log.");
     }
 
     private bool OnToggleBook(KeyCombination comb)
