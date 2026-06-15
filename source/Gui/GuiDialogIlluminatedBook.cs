@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using Cairo;
+using Newtonsoft.Json;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
@@ -35,6 +37,14 @@ public class GuiDialogIlluminatedBook : GuiDialog
     private float lastFrameW, lastFrameH;
     private double boardLeftPx, boardWpx;   // book-region paint extent, for DrawBoard
     private readonly Stack<string> history = new();
+
+    // The journal: one writable text block per spread, saved to a single file.
+    private List<string> journalSpreads = new();
+    private bool journalLoaded;
+    private bool journalDirty;
+    private long editToken;
+
+    private static string JournalPath => System.IO.Path.Combine(GamePaths.DataPath, "ModData", "almanacilluminated", "journal.json");
 
     public override string ToggleKeyCombinationCode => HotkeyCode;
 
@@ -121,15 +131,71 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (target != null) OpenChapter(target);
     }
 
-    /// <summary>Open the personal journal. A placeholder page for now; the writable scratchpad comes next.</summary>
+    /// <summary>Open the personal journal: a writable, file-saved notebook.</summary>
     private void OnJournal()
     {
         if (journalMode) return;
+        EnsureJournalLoaded();
         journalMode = true;
         pages = null;
         spreadIndex = 0;
         PlayPageTurnSound();
         ComposeSpread();
+    }
+
+    private void EnsureJournalLoaded()
+    {
+        if (journalLoaded) return;
+        journalLoaded = true;
+        try
+        {
+            if (File.Exists(JournalPath))
+            {
+                var list = JsonConvert.DeserializeObject<List<string>>(File.ReadAllText(JournalPath));
+                if (list != null) journalSpreads = list;
+            }
+        }
+        catch (Exception e) { IlluminatedLogger.Warn(capi, "journal", $"Could not load journal: {e.Message}"); }
+        if (journalSpreads.Count == 0) journalSpreads.Add("");
+    }
+
+    private void SaveJournal()
+    {
+        try
+        {
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(JournalPath)!);
+            File.WriteAllText(JournalPath, JsonConvert.SerializeObject(journalSpreads, Formatting.Indented));
+            journalDirty = false;
+        }
+        catch (Exception e) { IlluminatedLogger.Warn(capi, "journal", $"Could not save journal: {e.Message}"); }
+    }
+
+    /// <summary>Update the model on each keystroke and schedule a debounced auto-save.</summary>
+    private void OnJournalTextChanged(string text)
+    {
+        if (spreadIndex >= 0 && spreadIndex < journalSpreads.Count) journalSpreads[spreadIndex] = text;
+        journalDirty = true;
+
+        // Save 3s after the last keystroke: each edit supersedes the prior timer.
+        long token = ++editToken;
+        capi.Event.RegisterCallback(_ => { if (token == editToken && journalDirty) SaveJournal(); }, 3000);
+    }
+
+    private bool OnJournalSave()
+    {
+        SaveJournal();
+        ComposeSpread();
+        return true;
+    }
+
+    private bool OnJournalAddPage()
+    {
+        journalSpreads.Add("");
+        spreadIndex = journalSpreads.Count - 1;
+        journalDirty = true;
+        PlayPageTurnSound();
+        ComposeSpread();
+        return true;
     }
 
     // --- Composition ------------------------------------------------------
@@ -166,40 +232,47 @@ public class GuiDialogIlluminatedBook : GuiDialog
             lastFrameH = capi.Render.FrameHeight;
         }
 
-        // Paginate every chapter once, against the real page geometry, and cache it.
+        // Resolve the spread content: a chapter's paginated richtext, or the
+        // journal's writable spreads. The journal is not paginated; one spread is
+        // one writable page across the whole sheet.
+        int spreadCount;
         if (journalMode)
         {
-            pages = JournalPlaceholderPages();
-        }
-        else if (current != null)
-        {
-            if (cache == null)
-            {
-                var psw = Stopwatch.StartNew();
-                cache = new Dictionary<GuidePack, List<RichTextComponentBase[]>>();
-                foreach (var ch in library.Ordered)
-                    cache[ch] = ChapterRenderer.RenderPages(capi, ch, library, OnLinkClicked, contentW, contentH);
-                IlluminatedLogger.Info(capi, "book",
-                    $"Paginated {cache.Count} chapter(s) in {psw.ElapsedMilliseconds} ms");
-            }
-            pages = cache.TryGetValue(current, out var cp)
-                ? cp
-                : ChapterRenderer.RenderPages(capi, current, library, OnLinkClicked, contentW, contentH);
+            EnsureJournalLoaded();
+            spreadCount = System.Math.Max(1, journalSpreads.Count);
+            spreadIndex = GameMath.Clamp(spreadIndex, 0, spreadCount - 1);
         }
         else
         {
-            pages ??= MockChapter.Generate(capi).Select(s => s.Components).ToList();
+            if (current != null)
+            {
+                if (cache == null)
+                {
+                    var psw = Stopwatch.StartNew();
+                    cache = new Dictionary<GuidePack, List<RichTextComponentBase[]>>();
+                    foreach (var ch in library.Ordered)
+                        cache[ch] = ChapterRenderer.RenderPages(capi, ch, library, OnLinkClicked, contentW, contentH);
+                    IlluminatedLogger.Info(capi, "book",
+                        $"Paginated {cache.Count} chapter(s) in {psw.ElapsedMilliseconds} ms");
+                }
+                pages = cache.TryGetValue(current, out var cp)
+                    ? cp
+                    : ChapterRenderer.RenderPages(capi, current, library, OnLinkClicked, contentW, contentH);
+            }
+            else
+            {
+                pages ??= MockChapter.Generate(capi).Select(s => s.Components).ToList();
+            }
+
+            spreadIndex = GameMath.Clamp(spreadIndex, 0, System.Math.Max(0, (pages.Count - 1) / 2));
+            if (pendingOpenAtEnd)
+            {
+                spreadIndex = System.Math.Max(0, (pages.Count - 1) / 2);
+                pendingOpenAtEnd = false;
+            }
+            if (pages.Count == 0) return;
+            spreadCount = (pages.Count - 1) / 2 + 1;
         }
-
-        spreadIndex = GameMath.Clamp(spreadIndex, 0, System.Math.Max(0, (pages.Count - 1) / 2));
-
-        if (pendingOpenAtEnd)
-        {
-            spreadIndex = System.Math.Max(0, (pages.Count - 1) / 2);
-            pendingOpenAtEnd = false;
-        }
-
-        if (pages.Count == 0) return;
 
         int leftIdx = spreadIndex * 2;
         int rightIdx = leftIdx + 1;
@@ -212,12 +285,17 @@ public class GuiDialogIlluminatedBook : GuiDialog
         ElementBounds rightPanel = ElementBounds.Fixed(bookX + pad + pageW + gutter, pageY, pageW, pageH);
         ElementBounds leftText = ElementBounds.Fixed(bookX + pad + inset, pageY + inset, contentW, contentH);
         ElementBounds rightText = ElementBounds.Fixed(bookX + pad + pageW + gutter + inset, pageY + inset, contentW, contentH);
+        // Journal: one continuous sheet and one writing area across the whole spread.
+        ElementBounds spreadPanel = ElementBounds.Fixed(bookX + pad, pageY, pageW * 2 + gutter, pageH);
+        ElementBounds journalText = ElementBounds.Fixed(bookX + pad + inset, pageY + inset, pageW * 2 + gutter - inset * 2, pageH - inset * 2);
 
         double btnY = pageY + pageH + 6;
-        bool showBack = history.Count > 0;
+        bool showBack = !journalMode && history.Count > 0;
         int slot = 0;
         ElementBounds Slot() => ElementBounds.Fixed(bookX + pad + slot++ * (btnW + btnGap), btnY, btnW, 28);
         ElementBounds? backBtn = showBack ? Slot() : null;
+        ElementBounds? saveBtn = journalMode ? Slot() : null;
+        ElementBounds? addBtn = journalMode ? Slot() : null;
         ElementBounds prevBtn = Slot();
 
         ElementBounds pageLabel = ElementBounds.Fixed(bookX + bookW / 2 - 130, btnY - 3, 260, 40);
@@ -228,31 +306,52 @@ public class GuiDialogIlluminatedBook : GuiDialog
         ElementBounds? leftTabs = hasTabs ? ElementBounds.Fixed(0, pageY, tabMargin, pageH) : null;
         ElementBounds? rightTabs = hasTabs ? ElementBounds.Fixed(bookX + bookW, pageY, tabMargin - 6, pageH) : null;
 
-        var children = new List<ElementBounds> { titleBarBounds, leftPanel, rightPanel, leftText, rightText, prevBtn, pageLabel, nextBtn };
+        var children = new List<ElementBounds> { titleBarBounds, prevBtn, pageLabel, nextBtn };
+        if (journalMode) { children.Add(spreadPanel); children.Add(journalText); }
+        else { children.Add(leftPanel); children.Add(rightPanel); children.Add(leftText); children.Add(rightText); }
         if (backBtn != null) children.Add(backBtn);
+        if (saveBtn != null) children.Add(saveBtn);
+        if (addBtn != null) children.Add(addBtn);
         if (leftTabs != null) children.Add(leftTabs);
         if (rightTabs != null) children.Add(rightTabs);
         bgBounds.WithChildren(children.ToArray());
 
-        int maxSpread = (pages.Count - 1) / 2;
+        int maxSpread = spreadCount - 1;
         string title = journalMode ? "Journal" : (current != null ? library.Title(current) : "The Almanac");
 
         var composer = capi.Gui
             .CreateCompo("illuminatedbook", dialogBounds)
             .AddStaticCustomDraw(bgBounds, DrawBoard)
-            .AddDialogTitleBar(title, OnTitleBarClose, null, titleBarBounds)
-            .AddStaticCustomDraw(leftPanel, DrawPage)
-            .AddStaticCustomDraw(rightPanel, DrawPage)
-            .AddRichtext(pages[leftIdx], leftText, "leftpage");
+            .AddDialogTitleBar(title, OnTitleBarClose, null, titleBarBounds);
 
-        if (rightIdx < pages.Count)
-            composer.AddRichtext(pages[rightIdx], rightText, "rightpage");
+        if (journalMode)
+        {
+            var journalFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithColor(new[] { 0.13, 0.09, 0.05, 1.0 });
+            composer.AddStaticCustomDraw(spreadPanel, DrawPage)
+                    .AddTextArea(journalText, OnJournalTextChanged, journalFont, "journaltext");
+            var ta = composer.GetTextArea("journaltext");
+            ta.Autoheight = false;
+            ta.SetMaxHeight((int)(pageH - inset * 2));
+        }
+        else
+        {
+            composer.AddStaticCustomDraw(leftPanel, DrawPage)
+                    .AddStaticCustomDraw(rightPanel, DrawPage)
+                    .AddRichtext(pages![leftIdx], leftText, "leftpage");
+            if (rightIdx < pages.Count)
+                composer.AddRichtext(pages[rightIdx], rightText, "rightpage");
+        }
 
         if (showBack) composer.AddSmallButton("◀ Back", OnBack, backBtn);
+        if (journalMode)
+        {
+            composer.AddSmallButton("Save", OnJournalSave, saveBtn);
+            composer.AddSmallButton("+ Page", OnJournalAddPage, addBtn);
+        }
 
         composer
             .AddSmallButton("‹ Prev", OnPrevPage, prevBtn)
-            .AddRichtext(PageLabel(leftIdx, rightIdx, maxSpread),
+            .AddRichtext(journalMode ? JournalLabel(spreadCount) : PageLabel(leftIdx, rightIdx, maxSpread),
                 CairoFont.WhiteSmallText(), pageLabel, "pagelabel")
             .AddSmallButton("Next ›", OnNextPage, nextBtn);
 
@@ -267,6 +366,15 @@ public class GuiDialogIlluminatedBook : GuiDialog
         }
 
         SingleComposer = composer.Compose();
+
+        if (journalMode)
+            SingleComposer.GetTextArea("journaltext")?.SetValue(journalSpreads[spreadIndex], false);
+    }
+
+    private string JournalLabel(int spreadCount)
+    {
+        int l = spreadIndex * 2 + 1, r = spreadIndex * 2 + 2;
+        return $"<font align=\"center\" color=\"#e8dcc0\">Journal  pages {l}–{r} / {spreadCount * 2}</font>";
     }
 
     /// <summary>
@@ -327,20 +435,6 @@ public class GuiDialogIlluminatedBook : GuiDialog
         return '#';
     }
 
-    /// <summary>One placeholder page for the journal until the writable scratchpad lands.</summary>
-    private List<RichTextComponentBase[]> JournalPlaceholderPages()
-    {
-        double[] ink = { 0.13, 0.09, 0.05, 1 };
-        var heading = CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold).WithColor(ink);
-        var italic = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithSlant(Cairo.FontSlant.Italic).WithColor(ink);
-        var page = new RichTextComponentBase[]
-        {
-            new RichTextComponent(capi, "Journal\n\n", heading),
-            new RichTextComponent(capi, "Your own notes will live here. A writable scratchpad, saved with your world, is coming next.", italic)
-        };
-        return new List<RichTextComponentBase[]> { page };
-    }
-
     /// <summary>
     /// Two readouts: where you are in this chapter, and where you are in the whole
     /// book. Pages count the parchment sides, so a spread shows a range like p. 3-4.
@@ -392,6 +486,11 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
     private bool OnPrevPage()
     {
+        if (journalMode)
+        {
+            if (spreadIndex > 0) { spreadIndex--; PlayPageTurnSound(); ComposeSpread(); }
+            return true;
+        }
         if (spreadIndex > 0)
         {
             spreadIndex--;
@@ -408,6 +507,11 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
     private bool OnNextPage()
     {
+        if (journalMode)
+        {
+            if (spreadIndex + 1 < System.Math.Max(1, journalSpreads.Count)) { spreadIndex++; PlayPageTurnSound(); ComposeSpread(); }
+            return true;
+        }
         if (pages != null && (spreadIndex + 1) * 2 < pages.Count)
         {
             spreadIndex++;
@@ -429,6 +533,12 @@ public class GuiDialogIlluminatedBook : GuiDialog
     }
 
     private void OnTitleBarClose() => TryClose();
+
+    public override void OnGuiClosed()
+    {
+        if (journalDirty) SaveJournal();
+        base.OnGuiClosed();
+    }
 
     public override bool PrefersUngrabbedMouse => true;
 }

@@ -15,11 +15,17 @@ Status of the build. The format spec is at `docs/SCHEMA.md` and is open for comm
 - **JSON Schema.** `docs/guide-pack.schema.json`, mirroring the spec with per-block validation. Authors get autocomplete and live error checking via a `$schema` line. Foundation for the web editor.
 - **Server overview and the contents block.** A gate-less chapter can set `overview: true` to pin first and become the landing page. The `contents` block fills itself from the live modlist (documented mods link, the rest show muted), `include` `added` or `all`. A copy-me template ships at `docs/examples/`. See SCHEMA.md section 11.
 - **Multi-chapter navigation.** The book holds the whole library. Internal `almanac://chapter/<id>` links jump between chapters, Prev/Next read straight through the book across chapter boundaries, and Back and Contents buttons return. Two page readouts: this chapter, and the whole book. All chapters paginate once and cache.
+- **Contents as its own tab.** A chapter may set `contents: true` to be the index page, kept out of the reading flow and reached by the Contents tab. The engine ships no live overview; it lives in the pack mod, with a tweakable template in `docs/examples/`.
+- **Tab ribbons hanging off both edges.** The book sits in a wider dialog; the leather paints only the book region so ribbons read as leading off it. Left: Contents, Journal, then passed letters. Right: current letter and those ahead. Custom `GuiElementChapterTabs` draws and hit-tests on either edge (the native vertical tabs hit-test the wrong side and cannot be clicked when right-facing).
+- **A-Z grouped index with a split.** Chapters group by first letter (ignoring a leading "The"); selecting a letter jumps to its first chapter and re-centers the split, the way a thumb-index moves as you read deeper. Only-present letters for now; range-folding (A-E, F-J) when packs grow.
+- **Writable journal.** A file-saved personal notebook: one writing sheet per spread, `Save`, `+ Page` (adds a spread), Prev/Next within it, 3-second debounced auto-save plus save-on-close, persisted to `ModData/almanacilluminated/journal.json`.
 
 ## Next
 
+- **Tab and book styling pass (cosmetic).** Pull ribbons snug against the book edge (close the gap), per-tab color/icon to match the Fable mockup, give the journal sheet book character (gutter/center line, margins), and lift the faint title bar. Then the real book-frame art (still a flat dark rectangle) — the biggest visual jump.
+- **A-Z range-folding.** Collapse sparse letter runs into ranges (A-E, F-J) and expand dense letters to singles, so a large pack's index fits the strip without overflow. Replaces only-present once chapter count grows.
 - **In-game author preview.** Watch a guide folder and hot-reload the chapter on change. Real renderer, zero drift.
-- **Navigation and IA, the rest.** A to Z index tabs, a Journal tab, top-edge bookmark ribbons, flip-to-search. Internal links and a contents page already work; this is the chrome on top. `handbook://` and external URL links still need their handlers.
+- **Navigation and IA, the rest.** Top-edge bookmark ribbons (pin a page), flip-to-search. `handbook://` and external URL links still need their handlers.
 - **The magic (phase 3).** Alt+J materialize animation, sprite page-turn with randomized sounds, speed-ramped flip-to-search, diegetic quest-complete notification.
 - **Integrations (phase 4).** Codex discovery renders as the Journal chapter, Progression Framework binds quest blocks to live state, server bridge sends guide manifests for server-side mods.
 
