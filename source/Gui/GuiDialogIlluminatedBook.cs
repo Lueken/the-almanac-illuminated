@@ -39,6 +39,8 @@ public class GuiDialogIlluminatedBook : GuiDialog
     private List<RichTextComponentBase[]>? cropsColumns;   // one packed column each; four per spread (two a page)
     private List<CropEntry>? catalog;
     private const int CropsColsPerSpread = 4;
+    private bool weatherMode;
+    private List<RichTextComponentBase[]>? weatherPages;   // prose, paginated like a chapter (two pages a spread)
     private float lastFrameW, lastFrameH;
     private double boardLeftPx, boardWpx, bookHpx;   // book-region paint extent, for DrawFrame
     private ImageSurface? frameSurface;              // the book art, loaded once per open
@@ -84,7 +86,24 @@ public class GuiDialogIlluminatedBook : GuiDialog
         {
             cropsMode = true;
             journalMode = false;
+            weatherMode = false;
             cropsColumns = null;
+            spreadIndex = 0;
+            PlayPageTurnSound();
+            ComposeSpread();
+        });
+    }
+
+    /// <summary>Open the Weather tab: an almanac outlook for the home climate's year.</summary>
+    private void OnWeather()
+    {
+        if (weatherMode) return;
+        ensureHomebase(() =>
+        {
+            weatherMode = true;
+            cropsMode = false;
+            journalMode = false;
+            weatherPages = null;
             spreadIndex = 0;
             PlayPageTurnSound();
             ComposeSpread();
@@ -96,6 +115,11 @@ public class GuiDialogIlluminatedBook : GuiDialog
         base.OnGuiOpened();
         WarnOverviewConflictOnce();
         current ??= library.Default;
+        // Rebuild the knowledge- and climate-dependent views on each open: the player
+        // learns foods (and may move home) while the book is shut, and the Crops/Weather
+        // pages should match the tooltips when they reopen.
+        cropsColumns = null;
+        weatherPages = null;
         ComposeSpread();
     }
 
@@ -143,9 +167,10 @@ public class GuiDialogIlluminatedBook : GuiDialog
     /// </summary>
     private void OpenChapter(GuidePack target, bool atEnd = false, bool silent = false)
     {
-        if (target == current && !journalMode && !cropsMode) return;
+        if (target == current && !journalMode && !cropsMode && !weatherMode) return;
         journalMode = false;
         cropsMode = false;
+        weatherMode = false;
         current = target;
         pages = null;
         spreadIndex = 0;
@@ -159,11 +184,11 @@ public class GuiDialogIlluminatedBook : GuiDialog
     {
         var target = library.Default;
         if (target == null) return true;
-        if (current == target && !journalMode && !cropsMode)
+        if (current == target && !journalMode && !cropsMode && !weatherMode)
         {
             if (spreadIndex != 0) { spreadIndex = 0; PlayPageTurnSound(); ComposeSpread(); }
         }
-        else { cropsMode = false; OpenChapter(target); }
+        else { cropsMode = false; weatherMode = false; OpenChapter(target); }
         return true;
     }
 
@@ -180,6 +205,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
         EnsureJournalLoaded();
         journalMode = true;
         cropsMode = false;
+        weatherMode = false;
         pages = null;
         spreadIndex = 0;
         PlayPageTurnSound();
@@ -285,6 +311,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
         {
             cache = null;
             cropsColumns = null;
+            weatherPages = null;
             lastFrameW = capi.Render.FrameWidth;
             lastFrameH = capi.Render.FrameHeight;
         }
@@ -310,7 +337,15 @@ public class GuiDialogIlluminatedBook : GuiDialog
         }
         else
         {
-            if (current != null)
+            if (weatherMode)
+            {
+                var hb = getHomebase();
+                weatherPages ??= hb != null
+                    ? WeatherRenderer.RenderPages(capi, HomeWeather.Sample(capi, hb), contentW, contentH)
+                    : new List<RichTextComponentBase[]> { System.Array.Empty<RichTextComponentBase>() };
+                pages = weatherPages;
+            }
+            else if (current != null)
             {
                 if (cache == null)
                 {
@@ -388,7 +423,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (rightTabs != null) children.Add(rightTabs);
         bgBounds.WithChildren(children.ToArray());
 
-        string title = cropsMode ? "Crops" : journalMode ? "Journal" : (current != null ? library.Title(current) : "The Almanac");
+        string title = weatherMode ? "Weather" : cropsMode ? "Crops" : journalMode ? "Journal" : (current != null ? library.Title(current) : "The Almanac");
 
         var titleFont = CairoFont.WhiteSmallishText()
             .WithFont(FontRegistry.SerifDecorative)
@@ -472,6 +507,12 @@ public class GuiDialogIlluminatedBook : GuiDialog
             rightPageNum = spreadIndex * CropsColsPerSpread + 2 < total ? spreadIndex * 2 + 2 : -1;
             return;
         }
+        if (weatherMode)
+        {
+            leftPageNum = leftIdx + 1;
+            rightPageNum = pages != null && rightIdx < pages.Count ? leftIdx + 2 : -1;
+            return;
+        }
         if (current == null || cache == null || pages == null || library.OrderIndex(current) < 0)
         {
             leftPageNum = rightPageNum = -1;
@@ -509,11 +550,11 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
         // The split point: the current chapter's letter. The fixed tabs (Contents,
         // Journal, Crops) have no letter, so the whole alphabet sits on the right.
-        char cur = (!journalMode && !cropsMode && current != null && library.OrderIndex(current) >= 0)
+        char cur = (!journalMode && !cropsMode && !weatherMode && current != null && library.OrderIndex(current) >= 0)
             ? LetterOf(library.Title(current)) : '\0';
 
-        var lLabels = new List<string> { "Contents", "Journal", "Crops" };
-        leftActions = new List<Action> { OnContents, OnJournal, OnCrops };
+        var lLabels = new List<string> { "Contents", "Journal", "Crops", "Weather" };
+        leftActions = new List<Action> { OnContents, OnJournal, OnCrops, OnWeather };
         foreach (char l in letters)
         {
             if (l >= cur) continue;
@@ -522,7 +563,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
             leftActions.Add(() => OpenChapter(ordered[idx]));
         }
         leftLabels = lLabels.ToArray();
-        leftActive = cropsMode ? 2 : journalMode ? 1 : (current == library.ContentsPage ? 0 : -1);
+        leftActive = weatherMode ? 3 : cropsMode ? 2 : journalMode ? 1 : (current == library.ContentsPage ? 0 : -1);
 
         var rLabels = new List<string>();
         rightActions = new List<Action>();
@@ -629,7 +670,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (forward) AdvanceNext(); else AdvancePrev();
     }
 
-    private bool CanGoPrev() => (journalMode || cropsMode)
+    private bool CanGoPrev() => (journalMode || cropsMode || weatherMode)
         ? spreadIndex > 0
         : spreadIndex > 0 || (current != null && library.Prev(current) != null);
 
@@ -637,12 +678,13 @@ public class GuiDialogIlluminatedBook : GuiDialog
     {
         if (journalMode) return spreadIndex + 1 < System.Math.Max(1, journalSpreads.Count);
         if (cropsMode) return cropsColumns != null && (spreadIndex + 1) * CropsColsPerSpread < cropsColumns.Count;
+        if (weatherMode) return pages != null && (spreadIndex + 1) * 2 < pages.Count;
         return (pages != null && (spreadIndex + 1) * 2 < pages.Count) || (current != null && library.Next(current) != null);
     }
 
     private void AdvancePrev()
     {
-        if (journalMode || cropsMode)
+        if (journalMode || cropsMode || weatherMode)
         {
             if (spreadIndex > 0) { spreadIndex--; ComposeSpread(); }
             return;
@@ -662,6 +704,11 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (cropsMode)
         {
             if (cropsColumns != null && (spreadIndex + 1) * CropsColsPerSpread < cropsColumns.Count) { spreadIndex++; ComposeSpread(); }
+            return;
+        }
+        if (weatherMode)
+        {
+            if (pages != null && (spreadIndex + 1) * 2 < pages.Count) { spreadIndex++; ComposeSpread(); }
             return;
         }
         if (pages != null && (spreadIndex + 1) * 2 < pages.Count) { spreadIndex++; ComposeSpread(); }

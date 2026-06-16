@@ -138,7 +138,37 @@ public class AlmanacIlluminatedModSystem : ModSystem
             .WithDescription("List the growable crops the Almanac discovered (logs detail to the client log)")
             .HandleWith(OnCropsCommand);
 
+        api.ChatCommands.Create("almweather")
+            .WithDescription("Sample the home weather outlook for the year (logs detail to the client log)")
+            .HandleWith(OnWeatherCommand);
+
+        api.ChatCommands.Create("almweathersweep")
+            .WithDescription("Sample the weather outlook across latitudes (equator to pole) to validate the prose")
+            .HandleWith(OnWeatherSweepCommand);
+
         IlluminatedLogger.Info(api, "startup", "Illuminated Phase 0 spike loaded — Alt+J opens the book");
+    }
+
+    private TextCommandResult OnWeatherCommand(TextCommandCallingArgs args)
+    {
+        if (capi == null) return TextCommandResult.Error("Client API unavailable");
+
+        EnsureHomebase(() =>
+        {
+            var w = HomeWeather.Sample(capi, homebasePos!);
+            string[] mn = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+            IlluminatedLogger.Info(capi, "weather",
+                $"Home {homebaseLabel} at {homebasePos} — lat {w.Latitude:0.00} ({(w.North ? "N" : "S")}), " +
+                $"year {w.YearMinTemp:0}°..{w.YearMaxTemp:0}°, swing {w.SeasonalSwing:0}°. " +
+                $"Warmest {mn[w.WarmestMonth]}, coldest {mn[w.ColdestMonth]}, wettest {mn[w.WettestMonth]}, driest {mn[w.DriestMonth]}. " +
+                (w.FrostFreeYear ? "Frost-free all year." : w.FrostBoundYear ? "Frozen all year." :
+                    $"Last frost ~{mn[w.LastFrostMonth]}, first frost ~{mn[w.FirstFrostMonth]}."));
+            for (int m = 0; m < 12; m++)
+                IlluminatedLogger.Info(capi, "weather",
+                    $"  {mn[m]}: mean {w.MonthMeanTemp[m]:0.#}° ({w.MonthMinTemp[m]:0}..{w.MonthMaxTemp[m]:0}°), wet {w.MonthWetness[m]:0.00}, snow {w.MonthSnowShare[m] * 100:0}%");
+            capi.ShowChatMessage($"Almanac weather sampled for {homebaseLabel} (lat {w.Latitude:0.00}). Details in the client log.");
+        });
+        return TextCommandResult.Success("Sampling home weather for the year; outlook will log shortly.");
     }
 
     private TextCommandResult OnCropsCommand(TextCommandCallingArgs args)
@@ -155,6 +185,49 @@ public class AlmanacIlluminatedModSystem : ModSystem
                 $"Homebase: {homebaseLabel} at {homebasePos}. Details in the client log.");
         });
         return TextCommandResult.Success("Querying homebase climate; crop catalog with planting windows will log shortly.");
+    }
+
+    private TextCommandResult OnWeatherSweepCommand(TextCommandCallingArgs args)
+    {
+        if (capi == null) return TextCommandResult.Error("Client API unavailable");
+
+        int playerX = (int)capi.World.Player.Entity.Pos.X;
+        int mapZ = capi.World.BlockAccessor.MapSizeZ;
+        // Latitude is a sawtooth in Z (equator -> +1 pole -> back), not monotonic, so step
+        // out from an equator by latitude x polarEquatorDistance to stay on one hemisphere.
+        int ped = int.TryParse(capi.World.Config?.GetString("polarEquatorDistance"), out var pv) ? pv : 50000;
+        int equatorZ = FindZForLatitude(0.0, mapZ);
+        IlluminatedLogger.Info(capi, "weather",
+            $"Latitude sweep at x={playerX} (mapSizeZ={mapZ}, polarEquatorDistance={ped}, equator z≈{equatorZ}):");
+
+        double[] targets = { 0.0, 0.25, 0.5, 0.75, 0.95 };
+        foreach (double target in targets)
+        {
+            int z = GameMath.Clamp(equatorZ + (int)(target * ped), 0, mapZ - 1);
+            var w = HomeWeather.Sample(capi, new BlockPos(playerX, 120, z));
+            string frost = w.FrostFreeYear ? "frost-free" : w.FrostBoundYear ? "frost-bound" : "seasonal frost";
+            IlluminatedLogger.Info(capi, "weather",
+                $"--- target lat {target:0.00} -> z={z}, actual lat {w.Latitude:0.00} ({(w.North ? "N" : "S")}), " +
+                $"year {w.YearMinTemp:0}°..{w.YearMaxTemp:0}°, swing {w.SeasonalSwing:0}°, {frost} ---");
+            foreach (var (title, text) in WeatherRenderer.BuildSections(w))
+                IlluminatedLogger.Info(capi, "weather", $"  [{title}] {text}");
+        }
+
+        capi.ShowChatMessage("Weather latitude sweep (equator → pole) logged to the client log.");
+        return TextCommandResult.Success("Sweeping latitudes; prose for each logged.");
+    }
+
+    /// <summary>First Z whose latitude reaches the target; OnGetLatitude is monotonic in Z, so binary search the map.</summary>
+    private int FindZForLatitude(double targetLat, int mapZ)
+    {
+        int lo = 0, hi = System.Math.Max(1, mapZ);
+        while (lo < hi)
+        {
+            int mid = (lo + hi) / 2;
+            if (capi!.World.Calendar.OnGetLatitude(mid) >= targetLat) hi = mid;
+            else lo = mid + 1;
+        }
+        return lo;
     }
 
     private bool OnToggleBook(KeyCombination comb)
