@@ -8,7 +8,7 @@ using Vintagestory.GameContent;
 
 namespace AlmanacIlluminated;
 
-public enum CropKind { SeedCrop, BerryBush, FruitTree }
+public enum CropKind { SeedCrop, Mushroom, BerryBush, FruitTree }
 
 /// <summary>
 /// One growable food source the Crops tab can list: the produce it yields, where it
@@ -47,6 +47,7 @@ public static class CropCatalog
     {
         var entries = new List<CropEntry>();
         entries.AddRange(BuildSeedCrops(capi));
+        entries.AddRange(BuildMushrooms(capi));
         entries.AddRange(BuildBerryBushes(capi));
         entries.AddRange(BuildFruitTrees(capi));
 
@@ -225,6 +226,37 @@ public static class CropCatalog
                 HeatDamageAbove = float.NaN,   // fruit trees have no modelled heat ceiling
                 TotalGrowthDays = (props.FloweringDays?.avg ?? 0) + (props.FruitingDays?.avg ?? 0) + (props.RipeDays?.avg ?? 0),
                 MultipleHarvests = true,
+            });
+        }
+        return entries;
+    }
+
+    /// <summary>
+    /// Mushrooms: foraged, not sown, but still food worth cataloguing. Any BlockMushroom
+    /// at a grown (not "harvested") state, keyed by the mushroom it drops. No growing
+    /// data — the card reads as a forage, not a planting.
+    /// </summary>
+    private static List<CropEntry> BuildMushrooms(ICoreClientAPI capi)
+    {
+        var entries = new List<CropEntry>();
+        foreach (var block in capi.World.Blocks)
+        {
+            if (block is not BlockMushroom || block.Code == null) continue;
+            if (block.Variant != null && block.Variant.TryGetValue("state", out var state)
+                && state.Equals("harvested", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var produce = ResolveProduce(block);
+            if (produce?.Collectible?.Code == null) continue;
+
+            entries.Add(new CropEntry
+            {
+                Kind = CropKind.Mushroom,
+                ProduceCode = produce.Collectible.Code.ToString(),
+                DisplayName = produce.GetName(),
+                SourceDomain = produce.Collectible.Code.Domain,
+                Produce = produce,
+                ColdDamageBelow = float.NaN,
+                HeatDamageAbove = float.NaN,
             });
         }
         return entries;

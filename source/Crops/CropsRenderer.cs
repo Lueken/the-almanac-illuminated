@@ -25,11 +25,50 @@ public static class CropsRenderer
         var body = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithColor(Ink);
         var muted = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithColor(Muted);
         var window = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithSlant(Cairo.FontSlant.Italic).WithColor(Ink);
+        var header = CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold).WithFontSize(19f).WithColor(Ink);
 
-        var cards = new List<List<RichTextComponentBase>>();
-        foreach (var e in entries) cards.Add(BuildCard(capi, e, homebase, name, body, muted, window));
-        return PackCards(capi, cards, pageWidth, pageHeight);
+        // Grouped: Crops, Mushrooms, Bushes, Fruit Trees — each by name within the group.
+        var ordered = new List<CropEntry>(entries);
+        ordered.Sort((a, b) =>
+        {
+            int g = GroupOrder(a.Kind).CompareTo(GroupOrder(b.Kind));
+            return g != 0 ? g : string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase);
+        });
+
+        var blocks = new List<List<RichTextComponentBase>>();
+        CropKind? lastKind = null;
+        foreach (var e in ordered)
+        {
+            if (lastKind == null || e.Kind != lastKind)
+            {
+                blocks.Add(new List<RichTextComponentBase>
+                {
+                    new RichTextComponent(capi, GroupTitle(e.Kind) + "\n", header) { UnscaledMarginTop = lastKind == null ? 0 : 14 },
+                });
+                lastKind = e.Kind;
+            }
+            blocks.Add(BuildCard(capi, e, homebase, name, body, muted, window));
+        }
+        return PackCards(capi, blocks, pageWidth, pageHeight);
     }
+
+    private static int GroupOrder(CropKind k) => k switch
+    {
+        CropKind.SeedCrop => 0,
+        CropKind.Mushroom => 1,
+        CropKind.BerryBush => 2,
+        CropKind.FruitTree => 3,
+        _ => 4,
+    };
+
+    private static string GroupTitle(CropKind k) => k switch
+    {
+        CropKind.SeedCrop => "Crops",
+        CropKind.Mushroom => "Mushrooms",
+        CropKind.BerryBush => "Bushes",
+        CropKind.FruitTree => "Fruit Trees",
+        _ => "Other",
+    };
 
     private static List<RichTextComponentBase> BuildCard(ICoreClientAPI capi, CropEntry e, BlockPos? homebase,
         CairoFont name, CairoFont body, CairoFont muted, CairoFont window)
@@ -58,10 +97,17 @@ public static class CropsRenderer
         string source = e.Vanilla ? "vanilla" : capi.ModLoader.GetMod(e.SourceDomain)?.Info?.Name ?? e.SourceDomain;
         comps.Add(new RichTextComponent(capi, e.DisplayName + "  ", name));
         comps.Add(new RichTextComponent(capi, $"{KindLabel(e.Kind)} · {source}\n", muted));
-        comps.Add(new RichTextComponent(capi, GrowingLine(e, known) + "\n", body));
 
-        string win = homebase != null ? PlantingWindow.Compute(capi, homebase, e).Summary() : "Set a homebase to see planting times";
-        comps.Add(new RichTextComponent(capi, win + "\n", window));
+        if (e.Kind == CropKind.Mushroom)
+        {
+            comps.Add(new RichTextComponent(capi, "Foraged in the wild — not sown.\n", window));
+        }
+        else
+        {
+            comps.Add(new RichTextComponent(capi, GrowingLine(e, known) + "\n", body));
+            string win = homebase != null ? PlantingWindow.Compute(capi, homebase, e).Summary() : "Set a homebase to see planting times";
+            comps.Add(new RichTextComponent(capi, win + "\n", window));
+        }
 
         if (!known)
             comps.Add(new RichTextComponent(capi, $"Learning… {(int)(know * 100)}%\n", muted));
@@ -73,6 +119,7 @@ public static class CropsRenderer
     private static string MaskedName(CropKind k) => k switch
     {
         CropKind.SeedCrop => "Unknown crop",
+        CropKind.Mushroom => "Unknown mushroom",
         CropKind.BerryBush => "Unknown berry",
         CropKind.FruitTree => "Unknown fruit",
         _ => "Unknown plant",
@@ -81,6 +128,7 @@ public static class CropsRenderer
     private static string KindLabel(CropKind k) => k switch
     {
         CropKind.SeedCrop => "crop",
+        CropKind.Mushroom => "mushroom",
         CropKind.BerryBush => "bush",
         CropKind.FruitTree => "fruit tree",
         _ => "plant",
