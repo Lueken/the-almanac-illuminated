@@ -276,8 +276,11 @@ public static class ChapterRenderer
                 }
                 else
                 {
+                    // No trailing newline: it would add a phantom empty line inside the
+                    // box, padding the bottom a full line more than the top. The box's
+                    // own Pad supplies even breathing room on every side.
                     var (fill, line) = CalloutColors(variant);
-                    comps.Add(new CalloutComponent(capi, (block.Str("text") ?? "") + "\n", italic, fill, line));
+                    comps.Add(new CalloutComponent(capi, block.Str("text") ?? "", italic, fill, line));
                 }
                 comps.Add(new RichTextComponent(capi, "\n", body));
                 break;
