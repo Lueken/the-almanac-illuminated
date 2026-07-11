@@ -27,6 +27,11 @@ public class AlmanacIlluminatedModSystem : ModSystem
     private string homebaseLabel = "";
     private Action? onHomebaseReceived;
 
+    // Author preview (dev-only): read guides live from a folder or packed zip, hot-reload on edit.
+    private PreviewSource.Location? previewLoc;
+    private System.IO.FileSystemWatcher? previewWatcher;
+    private long previewReloadToken;
+
     // Universal: the GUI is client-only, but the homebase sync needs a server handler.
     public override bool ShouldLoad(EnumAppSide side) => true;
 
@@ -146,6 +151,11 @@ public class AlmanacIlluminatedModSystem : ModSystem
             .WithDescription("Sample the weather outlook across latitudes (equator to pole) to validate the prose")
             .HandleWith(OnWeatherSweepCommand);
 
+        api.ChatCommands.Create("almpreview")
+            .WithDescription("Author preview: load guides live from a disk folder, hot-reload on edit. Args: <folder> | reload | off")
+            .WithArgs(api.ChatCommands.Parsers.OptionalAll("arg"))
+            .HandleWith(OnPreviewCommand);
+
         IlluminatedLogger.Info(api, "startup", "Illuminated Phase 0 spike loaded — Alt+J opens the book");
     }
 
@@ -230,6 +240,146 @@ public class AlmanacIlluminatedModSystem : ModSystem
         return lo;
     }
 
+    // --- Author preview ---------------------------------------------------
+
+    private TextCommandResult OnPreviewCommand(TextCommandCallingArgs args)
+    {
+        if (capi == null) return TextCommandResult.Error("Client API unavailable");
+
+        string arg = (args[0] as string)?.Trim() ?? "";
+
+        if (string.Equals(arg, "off", StringComparison.OrdinalIgnoreCase))
+        {
+            if (previewLoc == null) return TextCommandResult.Success("Preview is not active.");
+            StopPreviewWatcher();
+            previewLoc = null;
+            // Rebuild the library from the packaged guides and swap it back in.
+            library = new GuideLibrary(capi, guidePacks);
+            bookDialog?.ReloadLibrary(library);
+            IlluminatedLogger.Info(capi, "preview", "Preview off — restored packaged guides");
+            return TextCommandResult.Success("Preview off. Showing the packaged guides again.");
+        }
+
+        if (string.Equals(arg, "reload", StringComparison.OrdinalIgnoreCase))
+        {
+            if (previewLoc == null)
+                return TextCommandResult.Error("Preview is not active. Run `.almpreview <folder-or-zip>` first.");
+            ReloadPreview(announce: true);
+            return TextCommandResult.Success($"Reloaded preview from {previewLoc.Describe()}.");
+        }
+
+        // No keyword: enable preview. Use the given target, else find the dev assets folder.
+        PreviewSource.Location? loc;
+        if (arg.Length > 0)
+        {
+            loc = PreviewSource.Resolve(arg);
+        }
+        else
+        {
+            string? def = PreviewSource.ResolveDefaultFolder(capi);
+            if (def == null)
+                return TextCommandResult.Error(
+                    "Could not find the mod's guides folder automatically. Pass one: " +
+                    "`.almpreview C:\\path\\to\\almanac\\guides` or `.almpreview C:\\path\\to\\mod.zip`.");
+            loc = new PreviewSource.Location(false, def, null);
+        }
+
+        if (loc == null) return TextCommandResult.Error("Could not read that path.");
+
+        // Validate the target exists before committing to it.
+        if (loc.IsZip && !System.IO.File.Exists(loc.DiskPath))
+            return TextCommandResult.Error($"No such zip: {loc.DiskPath}");
+        if (!loc.IsZip && !System.IO.Directory.Exists(loc.DiskPath))
+            return TextCommandResult.Error($"No such folder: {loc.DiskPath}");
+
+        previewLoc = loc;
+        StartPreviewWatcher(loc);
+        ReloadPreview(announce: false);
+
+        // Open the book on the preview so the author sees it immediately.
+        bookDialog ??= new GuiDialogIlluminatedBook(capi, library!, () => homebasePos, EnsureHomebase);
+        if (!bookDialog.IsOpened()) bookDialog.TryOpen();
+
+        IlluminatedLogger.Info(capi, "preview", $"Preview on — watching {loc.Describe()}");
+        return TextCommandResult.Success(
+            $"Preview on. Reading guides live from {loc.Describe()}. " +
+            (loc.IsZip ? "Rebuild the zip to refresh. " : "Edit and save; the book reloads itself. ") +
+            "`.almpreview off` to stop.");
+    }
+
+    /// <summary>Re-read the preview target, rebuild the library, and swap it into the open book.</summary>
+    private void ReloadPreview(bool announce)
+    {
+        if (capi == null || previewLoc == null) return;
+
+        var result = PreviewSource.Load(capi, previewLoc);
+        var packs = new List<GuidePack>(result.Packs);
+        if (result.Errors.Count > 0)
+            packs.Insert(0, PreviewSource.BuildErrorChapter(result.Errors));
+
+        library = new GuideLibrary(capi, packs);
+        bookDialog?.ReloadLibrary(library);
+
+        if (announce || result.Errors.Count > 0)
+        {
+            string msg = result.Errors.Count > 0
+                ? $"[Almanac] Preview reloaded: {result.Packs.Count} ok, {result.Errors.Count} with errors — see the book."
+                : $"[Almanac] Preview reloaded: {result.Packs.Count} guide(s).";
+            capi.ShowChatMessage(msg);
+        }
+    }
+
+    private void StartPreviewWatcher(PreviewSource.Location loc)
+    {
+        StopPreviewWatcher();
+        // A folder: watch its *.json. A zip: watch the zip file itself in its
+        // directory (you cannot watch inside an archive), re-reading on rebuild.
+        string dir = loc.IsZip ? (System.IO.Path.GetDirectoryName(loc.DiskPath) ?? loc.DiskPath) : loc.DiskPath;
+        string filter = loc.IsZip ? System.IO.Path.GetFileName(loc.DiskPath) : "*.json";
+        try
+        {
+            var w = new System.IO.FileSystemWatcher(dir, filter)
+            {
+                NotifyFilter = System.IO.NotifyFilters.LastWrite | System.IO.NotifyFilters.FileName | System.IO.NotifyFilters.Size,
+                IncludeSubdirectories = false,
+                EnableRaisingEvents = true,
+            };
+            w.Changed += OnPreviewFileEvent;
+            w.Created += OnPreviewFileEvent;
+            w.Deleted += OnPreviewFileEvent;
+            w.Renamed += OnPreviewFileEvent;
+            previewWatcher = w;
+        }
+        catch (Exception e)
+        {
+            IlluminatedLogger.Warn(capi!, "preview",
+                $"Could not watch {dir} ({e.Message}); use `.almpreview reload` to refresh by hand.");
+        }
+    }
+
+    private void StopPreviewWatcher()
+    {
+        if (previewWatcher == null) return;
+        try { previewWatcher.EnableRaisingEvents = false; previewWatcher.Dispose(); }
+        catch { /* disposing a dead watcher is fine */ }
+        previewWatcher = null;
+    }
+
+    /// <summary>
+    /// Watcher events fire on a thread-pool thread and editors often emit several
+    /// per save. Debounce, and marshal the actual reload onto the main thread —
+    /// touching the GUI off-thread crashes the game.
+    /// </summary>
+    private void OnPreviewFileEvent(object sender, System.IO.FileSystemEventArgs e)
+    {
+        long token = System.Threading.Interlocked.Increment(ref previewReloadToken);
+        capi?.Event.RegisterCallback(_ =>
+        {
+            if (token != System.Threading.Interlocked.Read(ref previewReloadToken)) return;   // superseded by a later event
+            if (previewLoc != null) ReloadPreview(announce: false);
+        }, 250);
+    }
+
     private bool OnToggleBook(KeyCombination comb)
     {
         if (capi == null) return false;
@@ -247,6 +397,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
 
     public override void Dispose()
     {
+        StopPreviewWatcher();
         bookDialog?.Dispose();
         bookDialog = null;
         base.Dispose();

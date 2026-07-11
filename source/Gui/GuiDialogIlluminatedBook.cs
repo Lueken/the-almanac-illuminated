@@ -26,7 +26,8 @@ public class GuiDialogIlluminatedBook : GuiDialog
     // Fraction of the screen the open book fills.
     private const double ScreenFraction = 0.84;
 
-    private readonly GuideLibrary library;
+    // Not readonly: author preview swaps the library live via ReloadLibrary.
+    private GuideLibrary library;
 
     private GuidePack? current;
     private List<RichTextComponentBase[]>? pages;
@@ -76,6 +77,28 @@ public class GuiDialogIlluminatedBook : GuiDialog
         this.library = library;
         this.getHomebase = getHomebase;
         this.ensureHomebase = ensureHomebase;
+    }
+
+    /// <summary>
+    /// Swap in a freshly built library (author preview reload). Drops the
+    /// paginated cache and the current chapter so the book rebuilds from the new
+    /// content, lands back on the default page, and recomposes if it is open.
+    /// </summary>
+    public void ReloadLibrary(GuideLibrary newLibrary)
+    {
+        library = newLibrary;
+        cache = null;
+        current = null;
+        pages = null;
+        cropsColumns = null;
+        weatherPages = null;
+        catalog = null;
+        cropsMode = false;
+        weatherMode = false;
+        journalMode = false;
+        spreadIndex = 0;
+        warnedConflict = false;
+        if (IsOpened()) ComposeSpread();
     }
 
     /// <summary>Open the Crops tab: a computed catalogue of every growable food, gated and climate-aware.</summary>
