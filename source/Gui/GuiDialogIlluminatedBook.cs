@@ -26,6 +26,10 @@ public class GuiDialogIlluminatedBook : GuiDialog
     // Fraction of the screen the open book fills.
     private const double ScreenFraction = 0.84;
 
+    // The tab-ribbon margins on either side of the book. Full width when the
+    // screen can spare it; never narrower than the longest ribbon label needs.
+    private const double TabMarginMax = 150, TabMarginMin = 90;
+
     // Not readonly: author preview swaps the library live via ReloadLibrary.
     private GuideLibrary library;
 
@@ -43,6 +47,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
     private bool weatherMode;
     private List<RichTextComponentBase[]>? weatherPages;   // prose, paginated like a chapter (two pages a spread)
     private float lastFrameW, lastFrameH;
+    private float lastGuiScale;
     private double boardLeftPx, boardWpx, bookHpx;   // book-region paint extent, for DrawFrame
     private ImageSurface? frameSurface;              // the book art, loaded once per open
     private int soundCounter;                        // rotates the three page-turn sounds
@@ -144,6 +149,20 @@ public class GuiDialogIlluminatedBook : GuiDialog
         cropsColumns = null;
         weatherPages = null;
         ComposeSpread();
+    }
+
+    public override void OnFinalizeFrame(float dt)
+    {
+        base.OnFinalizeFrame(dt);
+        // A window resize or GUI-scale change while the book is open invalidates the
+        // whole geometry, not just the bounds the composer re-centers on its own.
+        // ComposeSpread updates the last-seen values, so this fires once per change.
+        // Frame size goes 0 when minimized; recomposing at 0 would go negative.
+        if (capi.Render.FrameWidth == 0 || capi.Render.FrameHeight == 0) return;
+        if (IsOpened() && (capi.Render.FrameWidth != lastFrameW || capi.Render.FrameHeight != lastFrameH || RuntimeEnv.GUIScale != lastGuiScale))
+        {
+            ComposeSpread();
+        }
     }
 
     /// <summary>
@@ -297,17 +316,30 @@ public class GuiDialogIlluminatedBook : GuiDialog
         // Size the book to a fraction of the screen. GUI bounds are unscaled
         // units that get multiplied by GUIScale at render, so divide it out.
         double scale = RuntimeEnv.GUIScale <= 0 ? 1 : RuntimeEnv.GUIScale;
+        double screenW = capi.Render.FrameWidth / scale;
+        double screenH = capi.Render.FrameHeight / scale;
         // The book is the frame art at its fixed aspect, fit inside a fraction of
         // the screen. The dialog is wider so the tab ribbons hang off both edges.
-        double availW = capi.Render.FrameWidth / scale * ScreenFraction;
-        double availH = capi.Render.FrameHeight / scale * ScreenFraction;
+        double availW = screenW * ScreenFraction;
+        double availH = screenH * ScreenFraction;
         double bookW, bookH;
         if (availW / availH > FrameAspect) { bookH = availH; bookW = bookH * FrameAspect; }
         else { bookW = availW; bookH = bookW / FrameAspect; }
 
         const double btnRow = 38, btnW = 104, btnGap = 6;
         bool hasTabs = library.Ordered.Count > 0;
-        double tabMargin = hasTabs ? 150 : 0;
+        // The whole dialog — ribbons included — must stay inside the window. On a
+        // roomy screen the ribbons get their full margin; on a tight one they give
+        // way first, down to their floor, and then the book itself shrinks.
+        const double screenPad = 8;
+        double tabMargin = hasTabs
+            ? Math.Min(TabMarginMax, Math.Max(TabMarginMin, (screenW - screenPad - bookW) / 2))
+            : 0;
+        if (bookW + 2 * tabMargin > screenW - screenPad)
+        {
+            bookW = screenW - screenPad - 2 * tabMargin;
+            bookH = bookW / FrameAspect;
+        }
         double bookX = tabMargin;                 // book region is offset right by the left margin
         double dialogW = tabMargin + bookW + tabMargin;
         double dialogH = bookH + btnRow;
@@ -329,14 +361,16 @@ public class GuiDialogIlluminatedBook : GuiDialog
         boardWpx = bookW * scale;
         bookHpx = bookH * scale;
 
-        // The page geometry changed (window resize): the cached pagination is stale.
-        if (capi.Render.FrameWidth != lastFrameW || capi.Render.FrameHeight != lastFrameH)
+        // The page geometry changed (window resize or GUI-scale change): the
+        // cached pagination is stale.
+        if (capi.Render.FrameWidth != lastFrameW || capi.Render.FrameHeight != lastFrameH || RuntimeEnv.GUIScale != lastGuiScale)
         {
             cache = null;
             cropsColumns = null;
             weatherPages = null;
             lastFrameW = capi.Render.FrameWidth;
             lastFrameH = capi.Render.FrameHeight;
+            lastGuiScale = RuntimeEnv.GUIScale;
         }
 
         // Resolve the spread content: a chapter's paginated richtext, or the
