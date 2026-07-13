@@ -44,8 +44,13 @@ public class GuiDialogIlluminatedBook : GuiDialog
     private List<RichTextComponentBase[]>? cropsColumns;   // one packed column each; four per spread (two a page)
     private List<CropEntry>? catalog;
     private const int CropsColsPerSpread = 4;
+
+    /// <summary>External tabs choose 2 (page-wide) or 4 (crops-style) columns a spread.</summary>
+    private int ExternalColsPerSpread() => externalTab?.ColumnsPerSpread == 2 ? 2 : 4;
     private bool weatherMode;
     private List<RichTextComponentBase[]>? weatherPages;   // prose, paginated like a chapter (two pages a spread)
+    private IAlmanacBookTab? externalTab;                  // active mod-registered tab, or null
+    private List<RichTextComponentBase[]>? externalColumns;
     private float lastFrameW, lastFrameH;
     private float lastGuiScale;
     private double boardLeftPx, boardWpx, bookHpx;   // book-region paint extent, for DrawFrame
@@ -75,13 +80,16 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
     private readonly System.Func<BlockPos?> getHomebase;
     private readonly Action<Action> ensureHomebase;
+    private readonly IReadOnlyList<IAlmanacBookTab> externalTabs;
 
     public GuiDialogIlluminatedBook(ICoreClientAPI capi, GuideLibrary library,
-        System.Func<BlockPos?> getHomebase, Action<Action> ensureHomebase) : base(capi)
+        System.Func<BlockPos?> getHomebase, Action<Action> ensureHomebase,
+        IReadOnlyList<IAlmanacBookTab>? externalTabs = null) : base(capi)
     {
         this.library = library;
         this.getHomebase = getHomebase;
         this.ensureHomebase = ensureHomebase;
+        this.externalTabs = externalTabs ?? Array.Empty<IAlmanacBookTab>();
     }
 
     /// <summary>
@@ -101,9 +109,25 @@ public class GuiDialogIlluminatedBook : GuiDialog
         cropsMode = false;
         weatherMode = false;
         journalMode = false;
+        externalTab = null;
+        externalColumns = null;
         spreadIndex = 0;
         warnedConflict = false;
         if (IsOpened()) ComposeSpread();
+    }
+
+    /// <summary>Open a mod-registered tab; its columns rebuild fresh (live data).</summary>
+    private void OnExternalTab(IAlmanacBookTab tab)
+    {
+        if (externalTab == tab) return;
+        externalTab = tab;
+        journalMode = false;
+        cropsMode = false;
+        weatherMode = false;
+        externalColumns = null;
+        spreadIndex = 0;
+        PlayPageTurnSound();
+        ComposeSpread();
     }
 
     /// <summary>Open the Crops tab: a computed catalogue of every growable food, gated and climate-aware.</summary>
@@ -115,6 +139,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
             cropsMode = true;
             journalMode = false;
             weatherMode = false;
+            externalTab = null;
             cropsColumns = null;
             spreadIndex = 0;
             PlayPageTurnSound();
@@ -131,6 +156,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
             weatherMode = true;
             cropsMode = false;
             journalMode = false;
+            externalTab = null;
             weatherPages = null;
             spreadIndex = 0;
             PlayPageTurnSound();
@@ -145,9 +171,11 @@ public class GuiDialogIlluminatedBook : GuiDialog
         current ??= library.Default;
         // Rebuild the knowledge- and climate-dependent views on each open: the player
         // learns foods (and may move home) while the book is shut, and the Crops/Weather
-        // pages should match the tooltips when they reopen.
+        // pages should match the tooltips when they reopen. External tabs rebuild
+        // too — their data (ranks, practice) moves while the book is closed.
         cropsColumns = null;
         weatherPages = null;
+        externalColumns = null;
         ComposeSpread();
     }
 
@@ -209,10 +237,11 @@ public class GuiDialogIlluminatedBook : GuiDialog
     /// </summary>
     private void OpenChapter(GuidePack target, bool atEnd = false, bool silent = false)
     {
-        if (target == current && !journalMode && !cropsMode && !weatherMode) return;
+        if (target == current && !journalMode && !cropsMode && !weatherMode && externalTab == null) return;
         journalMode = false;
         cropsMode = false;
         weatherMode = false;
+        externalTab = null;
         current = target;
         pages = null;
         spreadIndex = 0;
@@ -226,11 +255,11 @@ public class GuiDialogIlluminatedBook : GuiDialog
     {
         var target = library.Default;
         if (target == null) return true;
-        if (current == target && !journalMode && !cropsMode && !weatherMode)
+        if (current == target && !journalMode && !cropsMode && !weatherMode && externalTab == null)
         {
             if (spreadIndex != 0) { spreadIndex = 0; PlayPageTurnSound(); ComposeSpread(); }
         }
-        else { cropsMode = false; weatherMode = false; OpenChapter(target); }
+        else { cropsMode = false; weatherMode = false; externalTab = null; OpenChapter(target); }
         return true;
     }
 
@@ -248,6 +277,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
         journalMode = true;
         cropsMode = false;
         weatherMode = false;
+        externalTab = null;
         pages = null;
         spreadIndex = 0;
         PlayPageTurnSound();
@@ -368,6 +398,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
             cache = null;
             cropsColumns = null;
             weatherPages = null;
+            externalColumns = null;
             lastFrameW = capi.Render.FrameWidth;
             lastFrameH = capi.Render.FrameHeight;
             lastGuiScale = RuntimeEnv.GUIScale;
@@ -388,6 +419,17 @@ public class GuiDialogIlluminatedBook : GuiDialog
             catalog ??= CropCatalog.Build(capi);
             cropsColumns ??= CropsRenderer.RenderPages(capi, catalog, getHomebase(), cropsSubColW, contentH);
             int maxSpread = System.Math.Max(0, (cropsColumns.Count - 1) / CropsColsPerSpread);
+            spreadIndex = GameMath.Clamp(spreadIndex, 0, maxSpread);
+            if (pendingOpenAtEnd) { spreadIndex = maxSpread; pendingOpenAtEnd = false; }
+            spreadCount = maxSpread + 1;
+        }
+        else if (externalTab != null)
+        {
+            int cps = ExternalColsPerSpread();
+            externalColumns ??= externalTab.BuildColumns(capi, cps == 2 ? colW : cropsSubColW, contentH)
+                ?? new List<RichTextComponentBase[]>();
+            if (externalColumns.Count == 0) externalColumns.Add(System.Array.Empty<RichTextComponentBase>());
+            int maxSpread = System.Math.Max(0, (externalColumns.Count - 1) / cps);
             spreadIndex = GameMath.Clamp(spreadIndex, 0, maxSpread);
             if (pendingOpenAtEnd) { spreadIndex = maxSpread; pendingOpenAtEnd = false; }
             spreadCount = maxSpread + 1;
@@ -472,7 +514,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
         var children = new List<ElementBounds> { titleTextBounds, homeBtn, cornerBounds };
         if (journalMode) children.Add(journalText);
-        else if (cropsMode) children.AddRange(cropsCols);
+        else if (cropsMode || (externalTab != null && ExternalColsPerSpread() == 4)) children.AddRange(cropsCols);
         else { children.Add(leftText); children.Add(rightText); }
         if (saveBtn != null) children.Add(saveBtn);
         if (addBtn != null) children.Add(addBtn);
@@ -480,7 +522,9 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (rightTabs != null) children.Add(rightTabs);
         bgBounds.WithChildren(children.ToArray());
 
-        string title = weatherMode ? "Weather" : cropsMode ? "Crops" : journalMode ? "Journal" : (current != null ? library.Title(current) : "The Almanac");
+        string title = weatherMode ? "Weather" : cropsMode ? "Crops" : journalMode ? "Journal"
+            : externalTab != null ? externalTab.Label
+            : (current != null ? library.Title(current) : "The Almanac");
 
         var titleFont = CairoFont.WhiteSmallishText()
             .WithFont(FontRegistry.SerifDecorative)
@@ -506,6 +550,23 @@ public class GuiDialogIlluminatedBook : GuiDialog
             for (int i = 0; i < CropsColsPerSpread; i++)
                 if (baseCol + i < cropsColumns!.Count)
                     composer.AddRichtext(cropsColumns[baseCol + i], cropsCols[i], "cropcol" + i);
+        }
+        else if (externalTab != null)
+        {
+            int cps = ExternalColsPerSpread();
+            int baseCol = spreadIndex * cps;
+            if (cps == 4)
+            {
+                for (int i = 0; i < cps; i++)
+                    if (baseCol + i < externalColumns!.Count)
+                        composer.AddRichtext(externalColumns[baseCol + i], cropsCols[i], "extcol" + i);
+            }
+            else
+            {
+                composer.AddRichtext(externalColumns![baseCol], leftText, "extcol0");
+                if (baseCol + 1 < externalColumns.Count)
+                    composer.AddRichtext(externalColumns[baseCol + 1], rightText, "extcol1");
+            }
         }
         else
         {
@@ -570,6 +631,14 @@ public class GuiDialogIlluminatedBook : GuiDialog
             rightPageNum = pages != null && rightIdx < pages.Count ? leftIdx + 2 : -1;
             return;
         }
+        if (externalTab != null)
+        {
+            int cps = ExternalColsPerSpread();
+            int total = externalColumns?.Count ?? 0;
+            leftPageNum = spreadIndex * 2 + 1;
+            rightPageNum = spreadIndex * cps + cps / 2 < total ? spreadIndex * 2 + 2 : -1;
+            return;
+        }
         if (current == null || cache == null || pages == null || library.OrderIndex(current) < 0)
         {
             leftPageNum = rightPageNum = -1;
@@ -607,11 +676,20 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
         // The split point: the current chapter's letter. The fixed tabs (Contents,
         // Journal, Crops) have no letter, so the whole alphabet sits on the right.
-        char cur = (!journalMode && !cropsMode && !weatherMode && current != null && library.OrderIndex(current) >= 0)
+        char cur = (!journalMode && !cropsMode && !weatherMode && externalTab == null
+                && current != null && library.OrderIndex(current) >= 0)
             ? LetterOf(library.Title(current)) : '\0';
 
         var lLabels = new List<string> { "Contents", "Journal", "Crops", "Weather" };
         leftActions = new List<Action> { OnContents, OnJournal, OnCrops, OnWeather };
+        int extActive = -1;
+        foreach (IAlmanacBookTab tab in externalTabs)
+        {
+            IAlmanacBookTab t = tab;
+            if (t == externalTab) extActive = lLabels.Count;
+            lLabels.Add(t.Label);
+            leftActions.Add(() => OnExternalTab(t));
+        }
         foreach (char l in letters)
         {
             if (l >= cur) continue;
@@ -620,7 +698,8 @@ public class GuiDialogIlluminatedBook : GuiDialog
             leftActions.Add(() => OpenChapter(ordered[idx]));
         }
         leftLabels = lLabels.ToArray();
-        leftActive = weatherMode ? 3 : cropsMode ? 2 : journalMode ? 1 : (current == library.ContentsPage ? 0 : -1);
+        leftActive = externalTab != null ? extActive
+            : weatherMode ? 3 : cropsMode ? 2 : journalMode ? 1 : (current == library.ContentsPage ? 0 : -1);
 
         var rLabels = new List<string>();
         rightActions = new List<Action>();
@@ -727,7 +806,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (forward) AdvanceNext(); else AdvancePrev();
     }
 
-    private bool CanGoPrev() => (journalMode || cropsMode || weatherMode)
+    private bool CanGoPrev() => (journalMode || cropsMode || weatherMode || externalTab != null)
         ? spreadIndex > 0
         : spreadIndex > 0 || (current != null && library.Prev(current) != null);
 
@@ -735,13 +814,14 @@ public class GuiDialogIlluminatedBook : GuiDialog
     {
         if (journalMode) return spreadIndex + 1 < System.Math.Max(1, journalSpreads.Count);
         if (cropsMode) return cropsColumns != null && (spreadIndex + 1) * CropsColsPerSpread < cropsColumns.Count;
+        if (externalTab != null) return externalColumns != null && (spreadIndex + 1) * ExternalColsPerSpread() < externalColumns.Count;
         if (weatherMode) return pages != null && (spreadIndex + 1) * 2 < pages.Count;
         return (pages != null && (spreadIndex + 1) * 2 < pages.Count) || (current != null && library.Next(current) != null);
     }
 
     private void AdvancePrev()
     {
-        if (journalMode || cropsMode || weatherMode)
+        if (journalMode || cropsMode || weatherMode || externalTab != null)
         {
             if (spreadIndex > 0) { spreadIndex--; ComposeSpread(); }
             return;
@@ -761,6 +841,11 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (cropsMode)
         {
             if (cropsColumns != null && (spreadIndex + 1) * CropsColsPerSpread < cropsColumns.Count) { spreadIndex++; ComposeSpread(); }
+            return;
+        }
+        if (externalTab != null)
+        {
+            if (externalColumns != null && (spreadIndex + 1) * ExternalColsPerSpread() < externalColumns.Count) { spreadIndex++; ComposeSpread(); }
             return;
         }
         if (weatherMode)

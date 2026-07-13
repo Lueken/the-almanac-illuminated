@@ -27,6 +27,10 @@ public class AlmanacIlluminatedModSystem : ModSystem
     private string homebaseLabel = "";
     private Action? onHomebaseReceived;
 
+    // Book tabs registered by other mods (TCM's Callings first). Initialized
+    // inline so registration is safe regardless of ModSystem start order.
+    private readonly List<IAlmanacBookTab> bookTabs = new();
+
     // Author preview (dev-only): read guides live from a folder or packed zip, hot-reload on edit.
     private PreviewSource.Location? previewLoc;
     private System.IO.FileSystemWatcher? previewWatcher;
@@ -34,6 +38,18 @@ public class AlmanacIlluminatedModSystem : ModSystem
 
     // Universal: the GUI is client-only, but the homebase sync needs a server handler.
     public override bool ShouldLoad(EnumAppSide side) => true;
+
+    /// <summary>
+    /// Registers an external book tab (client side). Call any time before the
+    /// book first opens — typically from your mod's StartClientSide via
+    /// api.ModLoader.GetModSystem&lt;AlmanacIlluminatedModSystem&gt;().
+    /// </summary>
+    public void RegisterBookTab(IAlmanacBookTab tab)
+    {
+        if (tab == null || bookTabs.Contains(tab)) return;
+        bookTabs.Add(tab);
+        if (capi != null) IlluminatedLogger.Info(capi, "tabs", $"External book tab registered: {tab.Label}");
+    }
 
     public override void StartPre(ICoreAPI api)
     {
@@ -297,7 +313,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         ReloadPreview(announce: false);
 
         // Open the book on the preview so the author sees it immediately.
-        bookDialog ??= new GuiDialogIlluminatedBook(capi, library!, () => homebasePos, EnsureHomebase);
+        bookDialog ??= new GuiDialogIlluminatedBook(capi, library!, () => homebasePos, EnsureHomebase, bookTabs);
         if (!bookDialog.IsOpened()) bookDialog.TryOpen();
 
         IlluminatedLogger.Info(capi, "preview", $"Preview on — watching {loc.Describe()}");
@@ -387,7 +403,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         // The whole visible library, ordered: the book opens to the overview (or
         // first front matter) and navigates between chapters via internal links.
         library ??= new GuideLibrary(capi, guidePacks);
-        bookDialog ??= new GuiDialogIlluminatedBook(capi, library, () => homebasePos, EnsureHomebase);
+        bookDialog ??= new GuiDialogIlluminatedBook(capi, library, () => homebasePos, EnsureHomebase, bookTabs);
 
         if (bookDialog.IsOpened()) bookDialog.TryClose();
         else bookDialog.TryOpen();
