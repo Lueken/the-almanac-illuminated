@@ -44,8 +44,11 @@ public class InkPipsComponent : RichTextComponentBase
         BoundsPerLine[0].Width = w;
         BoundsPerLine[0].Height = s;
         BoundsPerLine[0].X = cur.X1 + offsetX;
-        // Sit on the text baseline's visual middle rather than the line top.
-        BoundsPerLine[0].Y = lineY + Math.Max(0, (currentLineHeight - s) / 2);
+        // Plain lineY: the engine's Bottom vertical-align then shifts this by
+        // (line ascent - height), landing the pips on the text baseline — which
+        // is also the x-height optical center. Adding our own offset here would
+        // double-shift them below the line (the 0.0.3 overlap bug).
+        BoundsPerLine[0].Y = lineY;
         nextOffsetX = offsetX + w + GuiElement.scaled(6);
         return EnumCalcBoundsResult.Continue;
     }
