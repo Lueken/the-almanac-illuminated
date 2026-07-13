@@ -14,16 +14,21 @@ public class ProgressBarComponent : RichTextComponentBase
     private readonly double width;
     private readonly double height;
     private readonly double fraction;
+    private readonly double inkScale;
 
     private static readonly double[] Track = { 0.13, 0.09, 0.05, 0.10 };
     private static readonly double[] Fill = { 0.36, 0.23, 0.11, 0.85 };
+    private static readonly double[] FillEdge = { 0.20, 0.12, 0.05, 0.90 };
     private static readonly double[] Border = { 0.17, 0.11, 0.07, 0.90 };
 
-    public ProgressBarComponent(ICoreClientAPI api, double fraction, double width, double height = 9) : base(api)
+    /// <param name="inkScale">Multiplier on the track/border alphas — pass below 1
+    /// to let an empty, untouched bar recede into the page.</param>
+    public ProgressBarComponent(ICoreClientAPI api, double fraction, double width, double height = 9, double inkScale = 1.0) : base(api)
     {
         this.fraction = Math.Clamp(fraction, 0, 1);
         this.width = width;
         this.height = height;
+        this.inkScale = Math.Clamp(inkScale, 0, 1);
         Float = EnumFloat.Left;
         VerticalAlign = EnumVerticalAlign.Top;
         BoundsPerLine = new[] { new LineRectangled(0, 0, 0, 0) };
@@ -47,7 +52,7 @@ public class ProgressBarComponent : RichTextComponentBase
         double r = Math.Min(GuiElement.scaled(3), b.Height / 2);
 
         RoundRect(ctx, b.X, b.Y, b.Width, b.Height, r);
-        ctx.SetSourceRGBA(Track[0], Track[1], Track[2], Track[3]);
+        ctx.SetSourceRGBA(Track[0], Track[1], Track[2], Track[3] * inkScale);
         ctx.Fill();
 
         double fw = b.Width * fraction;
@@ -56,11 +61,23 @@ public class ProgressBarComponent : RichTextComponentBase
             RoundRect(ctx, b.X, b.Y, fw, b.Height, r);
             ctx.SetSourceRGBA(Fill[0], Fill[1], Fill[2], Fill[3]);
             ctx.Fill();
+
+            // Ink pooling against the rule: a darker hairline along the top of
+            // the fill, so the bar reads as drawn rather than rendered.
+            if (fw > r * 2 + GuiElement.scaled(2))
+            {
+                ctx.NewPath();
+                ctx.MoveTo(b.X + r, b.Y + GuiElement.scaled(1));
+                ctx.LineTo(b.X + fw - r, b.Y + GuiElement.scaled(1));
+                ctx.LineWidth = GuiElement.scaled(1);
+                ctx.SetSourceRGBA(FillEdge[0], FillEdge[1], FillEdge[2], FillEdge[3]);
+                ctx.Stroke();
+            }
         }
 
         RoundRect(ctx, b.X, b.Y, b.Width, b.Height, r);
         ctx.LineWidth = GuiElement.scaled(1);
-        ctx.SetSourceRGBA(Border[0], Border[1], Border[2], Border[3]);
+        ctx.SetSourceRGBA(Border[0], Border[1], Border[2], Border[3] * inkScale);
         ctx.Stroke();
     }
 
