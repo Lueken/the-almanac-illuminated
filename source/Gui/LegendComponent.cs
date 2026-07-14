@@ -32,6 +32,12 @@ public class LegendComponent : RichTextComponentBase
         this.rows = rows;
         this.headFont = headFont;
         this.bodyFont = bodyFont;
+        // Block behaviour: float left and align top so the flow engine reserves the
+        // legend's full height. Left inline (the default), it advanced no line, so
+        // MeasureHeight read it as ~0, the bottom-pin overshot, and the whole key
+        // drew below the page clip — invisible.
+        Float = EnumFloat.Left;
+        VerticalAlign = EnumVerticalAlign.Top;
         BoundsPerLine = new[] { new LineRectangled(0, 0, 0, 0) };
     }
 
