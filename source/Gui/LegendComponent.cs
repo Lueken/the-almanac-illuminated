@@ -9,6 +9,12 @@ namespace AlmanacIlluminated;
 /// text flush to the right edge of the column with its mark just to its left.
 /// Drawn as one piece so the marks (the affinity star, the barred pip) move with
 /// the text — ordinary text alignment leaves custom inline glyphs behind.
+///
+/// Build it through <see cref="Build"/>, never the constructor: the legend floats
+/// left (so the flow engine gives it block height), and a lone float advances no
+/// flow, so it must be trailed by a ClearFloat or MeasureHeight reads it as ~0 and
+/// any caller pinning it to a column foot overshoots it past the clip. Build bundles
+/// that pairing so callers can't forget it — the leak that once dropped the whole key.
 /// </summary>
 public class LegendComponent : RichTextComponentBase
 {
@@ -26,16 +32,25 @@ public class LegendComponent : RichTextComponentBase
     private static readonly double[] Ink = { 0.13, 0.09, 0.05, 0.85 };
     private static readonly double[] Faint = { 0.13, 0.09, 0.05, 0.40 };
 
-    public LegendComponent(ICoreClientAPI api, string header, (Glyph, string)[] rows, CairoFont headFont, CairoFont bodyFont) : base(api)
+    /// <summary>The legend plus its mandatory trailing clear, as one drop-in unit.
+    /// This is the only supported way to build it — see the type remarks.</summary>
+    public static RichTextComponentBase[] Build(ICoreClientAPI api, string header,
+        (Glyph, string)[] rows, CairoFont headFont, CairoFont bodyFont)
+        => new RichTextComponentBase[]
+        {
+            new LegendComponent(api, header, rows, headFont, bodyFont),
+            new ClearFloatTextComponent(api, 0),
+        };
+
+    private LegendComponent(ICoreClientAPI api, string header, (Glyph, string)[] rows, CairoFont headFont, CairoFont bodyFont) : base(api)
     {
         this.header = header;
         this.rows = rows;
         this.headFont = headFont;
         this.bodyFont = bodyFont;
-        // Block behaviour: float left and align top so the flow engine reserves the
-        // legend's full height. Left inline (the default), it advanced no line, so
-        // MeasureHeight read it as ~0, the bottom-pin overshot, and the whole key
-        // drew below the page clip — invisible.
+        // Float left + align top so the flow engine reserves the legend's full height.
+        // The trailing ClearFloat that Build appends is what makes that height actually
+        // count (a lone float advances no flow). Both halves are required.
         Float = EnumFloat.Left;
         VerticalAlign = EnumVerticalAlign.Top;
         BoundsPerLine = new[] { new LineRectangled(0, 0, 0, 0) };
