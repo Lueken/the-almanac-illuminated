@@ -27,7 +27,7 @@ public class CalloutComponent : RichTextComponent
     /// <summary>Vertical space the renderer must reserve above and below the box,
     /// so the Pad overhang (drawn past the text bounds) never collides with the
     /// next block. Sized to the larger of the two callout paddings, plus a hair.</summary>
-    public const double OuterMargin = Pad + 2;
+    public const double OuterMargin = Pad + 5;
 
     public CalloutComponent(ICoreClientAPI api, string text, CairoFont font, double[] interior, double[] border)
         : base(api, text, font)

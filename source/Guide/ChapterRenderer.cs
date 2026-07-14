@@ -21,8 +21,12 @@ public static class ChapterRenderer
 
     // Air above a section heading so it reads as a fresh section, never crowding the
     // paragraph before it. Kept tight below (the heading bonds to its first line).
-    // A clear break, a little over one line, so sections don't blur together.
-    private const float HeadingTopMargin = 26;
+    private const float HeadingTopMargin = 16;
+
+    // A blank-line break placed BETWEEN sections (not before the first, not after the
+    // last). UnscaledMarginTop alone did not reserve visible height across the atom
+    // boundary; a ClearFloat spacer does, reliably, the way the callout margins do.
+    private const float SectionGap = 18;
 
     /// <summary>
     /// Renders a chapter into book pages. Every block is laid out and measured at
@@ -59,8 +63,9 @@ public static class ChapterRenderer
         string initial = DeriveInitial(pack.Byline, pack.Title);
         var atoms = new List<Atom>();
 
-        foreach (var sec in pack.Sections)
+        for (int si = 0; si < pack.Sections.Count; si++)
         {
+            var sec = pack.Sections[si];
             var title = new List<RichTextComponentBase>();
             string? secTitle = GuideLibrary.Localize(sec.Title);
             if (!string.IsNullOrEmpty(secTitle))
@@ -75,6 +80,7 @@ public static class ChapterRenderer
                 if (bl.Count > 0) blockLists.Add(bl);
             }
 
+            int before = atoms.Count;
             if (sec.KeepTogether)
             {
                 var a = new Atom { PageBreakBefore = sec.PageBreakBefore, KeepTogether = true };
@@ -96,6 +102,12 @@ public static class ChapterRenderer
                     atoms.Add(a);
                 }
             }
+
+            // Blank-line break after every section but the last. Goes on the section's
+            // final atom so it sits at the bottom of a page cleanly (and never adds
+            // top padding when the next section opens a page).
+            if (atoms.Count > before && si < pack.Sections.Count - 1)
+                atoms[atoms.Count - 1].Comps.Add(new ClearFloatTextComponent(capi, SectionGap));
         }
         return atoms;
     }
