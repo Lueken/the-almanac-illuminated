@@ -19,7 +19,7 @@ namespace AlmanacIlluminated;
 /// opens to the overview when one exists. Frame art and the page-flip animation
 /// arrive in later phases.
 /// </summary>
-public class GuiDialogIlluminatedBook : GuiDialog
+public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
 {
     public const string HotkeyCode = "almanacilluminatedbook";
 
@@ -90,6 +90,17 @@ public class GuiDialogIlluminatedBook : GuiDialog
         this.getHomebase = getHomebase;
         this.ensureHomebase = ensureHomebase;
         this.externalTabs = externalTabs ?? Array.Empty<IAlmanacBookTab>();
+
+        // Hand each tab the host it drives to drill in and back.
+        foreach (IAlmanacBookTab tab in this.externalTabs) tab.OnAttached(this);
+    }
+
+    /// <summary>IAlmanacBookTabHost: a tab changed its view-state and wants to redraw.</summary>
+    public void Recompose()
+    {
+        externalColumns = null;
+        spreadIndex = 0;
+        if (IsOpened()) ComposeSpread();
     }
 
     /// <summary>
@@ -177,6 +188,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
     {
         if (externalTab == tab) return;
         externalTab = tab;
+        tab.OnActivated();                 // reset the tab to its top-level view
         journalMode = false;
         cropsMode = false;
         weatherMode = false;

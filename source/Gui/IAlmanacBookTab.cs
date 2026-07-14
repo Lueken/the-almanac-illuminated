@@ -19,6 +19,15 @@ public interface IAlmanacBookTab
     /// group a mod's tabs in a chosen order. Ties break by label.</summary>
     int Order => 100;
 
+    /// <summary>Called once when the book binds this tab, handing it a host it can
+    /// use to request a recompose after changing its own view-state (the drill-down
+    /// seam). Default: ignore, for tabs that never drill in.</summary>
+    void OnAttached(IAlmanacBookTabHost host) { }
+
+    /// <summary>Called when the tab is chosen from the ribbon, so it can reset to its
+    /// top-level view rather than reopen wherever it last was. Default: ignore.</summary>
+    void OnActivated() { }
+
     /// <summary>Spread layout: 2 = one column per page (chapter-like),
     /// 4 = two narrow columns per page (Crops-like). Other values read as 4.</summary>
     int ColumnsPerSpread { get; }
