@@ -21,7 +21,8 @@ public static class ChapterRenderer
 
     // Air above a section heading so it reads as a fresh section, never crowding the
     // paragraph before it. Kept tight below (the heading bonds to its first line).
-    private const float HeadingTopMargin = 16;
+    // A clear break, a little over one line, so sections don't blur together.
+    private const float HeadingTopMargin = 26;
 
     /// <summary>
     /// Renders a chapter into book pages. Every block is laid out and measured at
