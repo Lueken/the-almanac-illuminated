@@ -154,6 +154,13 @@ public class AlmanacIlluminatedModSystem : ModSystem
             GlKeys.J, HotkeyType.GUIOrOtherControls, altPressed: true);
         api.Input.SetHotKeyHandler(GuiDialogIlluminatedBook.HotkeyCode, OnToggleBook);
 
+        // Deep links into the book, clickable from anywhere richtext links render
+        // (chat, a server-info panel, another mod's guide). A link like
+        // <a href="almanac://chapter/almanactcm:trades">the Trades</a> opens the
+        // book straight to that chapter. TextLinkComponent routes any almanac://
+        // click here through the global link-protocol registry.
+        api.RegisterLinkProtocol("almanac", OnAlmanacLink);
+
         // Crops-tab phase 1: a dev command to validate crop discovery against a pack.
         api.ChatCommands.Create("almcrops")
             .WithDescription("List the growable crops the Almanac discovered (logs detail to the client log)")
@@ -394,6 +401,32 @@ public class AlmanacIlluminatedModSystem : ModSystem
             if (token != System.Threading.Interlocked.Read(ref previewReloadToken)) return;   // superseded by a later event
             if (previewLoc != null) ReloadPreview(announce: false);
         }, 250);
+    }
+
+    /// <summary>
+    /// Handles an almanac:// link clicked anywhere in the UI. Opens the book (if
+    /// shut) and navigates to the referenced chapter. Only chapter links are wired;
+    /// unknown forms log and no-op so a stray link never throws.
+    /// </summary>
+    private void OnAlmanacLink(LinkTextComponent link)
+    {
+        if (capi == null) return;
+        string href = link?.Href ?? "";
+        const string chapterPrefix = "almanac://chapter/";
+        if (!href.StartsWith(chapterPrefix))
+        {
+            IlluminatedLogger.Info(capi, "link", $"Unrecognized almanac link: {href}");
+            return;
+        }
+
+        string rest = href.Substring(chapterPrefix.Length);
+        int hash = rest.IndexOf('#');
+        string id = hash >= 0 ? rest.Substring(0, hash) : rest;   // section anchors land on page 1 for now
+
+        library ??= new GuideLibrary(capi, guidePacks);
+        bookDialog ??= new GuiDialogIlluminatedBook(capi, library, () => homebasePos, EnsureHomebase, bookTabs);
+        if (!bookDialog.IsOpened()) bookDialog.TryOpen();
+        bookDialog.OpenToChapter(id);
     }
 
     private bool OnToggleBook(KeyCombination comb)

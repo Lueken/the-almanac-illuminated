@@ -116,6 +116,62 @@ public class GuiDialogIlluminatedBook : GuiDialog
         if (IsOpened()) ComposeSpread();
     }
 
+    /// <summary>
+    /// One entry in the left ribbon's mod-tab band: computed tabs (Callings) and
+    /// ribbon-tab chapters (Trades, Mastery) share one ordering, so a mod's tabs
+    /// group together in its chosen order regardless of which mechanism each uses.
+    /// </summary>
+    private sealed class ModTabEntry
+    {
+        public string Label = "";
+        public int Order;
+        public Action Activate = () => { };
+        public Func<bool> IsActive = () => false;
+    }
+
+    private List<ModTabEntry> BuildModTabs()
+    {
+        var list = new List<ModTabEntry>();
+        foreach (IAlmanacBookTab t in externalTabs)
+        {
+            IAlmanacBookTab tab = t;
+            list.Add(new ModTabEntry
+            {
+                Label = tab.Label,
+                Order = tab.Order,
+                Activate = () => OnExternalTab(tab),
+                IsActive = () => externalTab == tab,
+            });
+        }
+        foreach (GuidePack ch in library.RibbonChapters)
+        {
+            GuidePack chap = ch;
+            list.Add(new ModTabEntry
+            {
+                Label = library.Title(chap),
+                Order = chap.Order ?? 100,
+                Activate = () => OpenChapter(chap),
+                IsActive = () => !journalMode && !cropsMode && !weatherMode && externalTab == null && current == chap,
+            });
+        }
+        list.Sort((a, b) => a.Order != b.Order ? a.Order.CompareTo(b.Order)
+            : string.Compare(a.Label, b.Label, StringComparison.OrdinalIgnoreCase));
+        return list;
+    }
+
+    /// <summary>Open the book directly to a chapter by id (the almanac:// link protocol
+    /// entry point). No-op with a log if the id is unknown or gated off.</summary>
+    public void OpenToChapter(string id)
+    {
+        GuidePack? target = library.ById(id);
+        if (target == null)
+        {
+            IlluminatedLogger.Info(capi, "link", $"almanac link: chapter '{id}' is unavailable");
+            return;
+        }
+        OpenChapter(target);
+    }
+
     /// <summary>Open a mod-registered tab; its columns rebuild fresh (live data).</summary>
     private void OnExternalTab(IAlmanacBookTab tab)
     {
@@ -357,7 +413,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
         else { bookW = availW; bookH = bookW / FrameAspect; }
 
         const double btnRow = 38, btnW = 104, btnGap = 6;
-        bool hasTabs = library.Ordered.Count > 0;
+        bool hasTabs = library.Ordered.Count > 0 || externalTabs.Count > 0 || library.RibbonChapters.Count > 0;
         // The whole dialog — ribbons included — must stay inside the window. On a
         // roomy screen the ribbons get their full margin; on a tight one they give
         // way first, down to their floor, and then the book itself shrinks.
@@ -682,13 +738,15 @@ public class GuiDialogIlluminatedBook : GuiDialog
 
         var lLabels = new List<string> { "Contents", "Journal", "Crops", "Weather" };
         leftActions = new List<Action> { OnContents, OnJournal, OnCrops, OnWeather };
-        int extActive = -1;
-        foreach (IAlmanacBookTab tab in externalTabs)
+
+        // The mod-tab band: computed tabs and ribbon-tab chapters, one ordering.
+        var modTabs = BuildModTabs();
+        int modActive = -1;
+        foreach (ModTabEntry mt in modTabs)
         {
-            IAlmanacBookTab t = tab;
-            if (t == externalTab) extActive = lLabels.Count;
-            lLabels.Add(t.Label);
-            leftActions.Add(() => OnExternalTab(t));
+            if (mt.IsActive()) modActive = lLabels.Count;
+            lLabels.Add(mt.Label);
+            leftActions.Add(mt.Activate);
         }
         foreach (char l in letters)
         {
@@ -698,7 +756,7 @@ public class GuiDialogIlluminatedBook : GuiDialog
             leftActions.Add(() => OpenChapter(ordered[idx]));
         }
         leftLabels = lLabels.ToArray();
-        leftActive = externalTab != null ? extActive
+        leftActive = modActive >= 0 ? modActive
             : weatherMode ? 3 : cropsMode ? 2 : journalMode ? 1 : (current == library.ContentsPage ? 0 : -1);
 
         var rLabels = new List<string>();

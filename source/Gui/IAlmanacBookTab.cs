@@ -14,6 +14,11 @@ public interface IAlmanacBookTab
     /// <summary>Ribbon label. Keep it one short word; the ribbons are narrow.</summary>
     string Label { get; }
 
+    /// <summary>Sort position among all mod tabs (computed tabs and ribbon-tab
+    /// chapters share one ordering), lower first. Defaults to 100; override to
+    /// group a mod's tabs in a chosen order. Ties break by label.</summary>
+    int Order => 100;
+
     /// <summary>Spread layout: 2 = one column per page (chapter-like),
     /// 4 = two narrow columns per page (Crops-like). Other values read as 4.</summary>
     int ColumnsPerSpread { get; }

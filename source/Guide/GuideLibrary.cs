@@ -40,6 +40,10 @@ public sealed class GuideLibrary
     /// <summary>The contents/index page, reached through the Contents tab. Kept out of the chapter flow.</summary>
     public GuidePack? ContentsPage { get; }
 
+    /// <summary>Chapters that requested their own ribbon tab. Rendered as left-ribbon
+    /// tabs (grouped with computed tabs, sorted by `order`), never in the A-Z flow.</summary>
+    public IReadOnlyList<GuidePack> RibbonChapters { get; }
+
     public GuideLibrary(ICoreClientAPI capi, List<GuidePack> packs)
     {
         this.capi = capi;
@@ -57,6 +61,9 @@ public sealed class GuideLibrary
 
         // The contents page is its own thing, reached by tab, not part of the flow.
         ContentsPage = packs.FirstOrDefault(p => p.Contents);
+
+        // Ribbon-tab chapters are pulled out of the reading flow and shown as tabs.
+        RibbonChapters = packs.Where(p => p.RibbonTab).ToList();
 
         Ordered = BuildOrder(packs, Overview, ContentsPage);
 
@@ -124,14 +131,14 @@ public sealed class GuideLibrary
     {
         bool IsFront(GuidePack p) => string.IsNullOrEmpty(p.Gate);
 
-        // Front matter minus the overview winner and the contents page, sorted by
-        // order then id. Demoted overview claimants fall in here like normal front matter.
-        var front = packs.Where(p => IsFront(p) && p != overview && p != contents)
+        // Front matter minus the overview winner, the contents page, and any ribbon
+        // tabs, sorted by order then id. Demoted overview claimants fall in here.
+        var front = packs.Where(p => IsFront(p) && p != overview && p != contents && !p.RibbonTab)
             .OrderBy(p => p.Order ?? int.MaxValue)
             .ThenBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var gated = packs.Where(p => !IsFront(p) && p != contents)
+        var gated = packs.Where(p => !IsFront(p) && p != contents && !p.RibbonTab)
             .OrderBy(p => ModName(p.Gate!), StringComparer.OrdinalIgnoreCase)
             .ThenBy(p => Title(p), StringComparer.OrdinalIgnoreCase)
             .ToList();

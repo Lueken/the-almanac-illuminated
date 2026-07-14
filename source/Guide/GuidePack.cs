@@ -28,6 +28,11 @@ public class GuidePack
     /// chapter reading flow and tabs, and reached through the Contents tab instead.</summary>
     public bool Contents;
 
+    /// <summary>Pins this chapter as its own left-ribbon tab (titled by `title`),
+    /// pulled out of the A-Z reading flow. Grouped with computed tabs and sorted
+    /// among them by `order`. For a mod that wants dedicated tabs, not an index entry.</summary>
+    public bool RibbonTab;
+
     public List<GuideSection> Sections = new();
 
     /// <summary>Asset location this pack was read from. For logs and diagnostics.</summary>
