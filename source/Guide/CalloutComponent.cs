@@ -21,7 +21,13 @@ public class CalloutComponent : RichTextComponent
     // the box reads as a band). The text narrows instead, like the author's hand.
     private double colLeft, colRight;
 
-    private const double Pad = 13, Radius = 7, OuterStroke = 2, InnerStroke = 1, RuleGap = 3;
+    public const double Pad = 13;
+    private const double Radius = 7, OuterStroke = 2, InnerStroke = 1, RuleGap = 3;
+
+    /// <summary>Vertical space the renderer must reserve above and below the box,
+    /// so the Pad overhang (drawn past the text bounds) never collides with the
+    /// next block. Sized to the larger of the two callout paddings, plus a hair.</summary>
+    public const double OuterMargin = Pad + 2;
 
     public CalloutComponent(ICoreClientAPI api, string text, CairoFont font, double[] interior, double[] border)
         : base(api, text, font)

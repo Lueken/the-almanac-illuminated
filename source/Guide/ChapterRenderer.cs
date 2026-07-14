@@ -269,7 +269,12 @@ public static class ChapterRenderer
             case "callout":
             {
                 string variant = block.Str("variant") ?? "author";
-                comps.Add(new RichTextComponent(capi, "\n", body));
+                // ClearFloat spacers, not bare "\n": they reserve real measured
+                // height, so the box's Pad overhang is accounted for by the
+                // paginator AND cleared from the next block (a lone newline broke
+                // the line but reserved almost no height, so the box's bottom
+                // collided with the following heading).
+                comps.Add(new ClearFloatTextComponent(capi, (float)CalloutComponent.OuterMargin));
                 if (variant == "author")
                 {
                     comps.Add(new AuthorCalloutComponent(capi, block.Str("text") ?? "", italic, authorInitial));
@@ -282,7 +287,7 @@ public static class ChapterRenderer
                     var (fill, line) = CalloutColors(variant);
                     comps.Add(new CalloutComponent(capi, block.Str("text") ?? "", italic, fill, line));
                 }
-                comps.Add(new RichTextComponent(capi, "\n", body));
+                comps.Add(new ClearFloatTextComponent(capi, (float)CalloutComponent.OuterMargin));
                 break;
             }
 
@@ -300,7 +305,8 @@ public static class ChapterRenderer
                 break;
 
             case "divider":
-                comps.Add(new RichTextComponent(capi, "⸻⸻⸻⸻\n", body));
+                comps.Add(new DividerComponent(capi));
+                comps.Add(new ClearFloatTextComponent(capi, 4));
                 break;
 
             case "link":
