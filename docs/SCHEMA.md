@@ -128,7 +128,7 @@ A block is `{ "type": "...", ...props }`. Any block may carry one common field:
 | `steps` | `items: [text, ...]`, `ordered?` | A step list. Numbered by default, bulleted when `ordered` is false. |
 | `materials` | `items: [{ code, label?, count? }]` | A captioned itemstack grid of clickable slots. |
 | `recipe` | `recipe` or `output` | A native recipe render, reusing the handbook's own component. |
-| `callout` | `variant` (`author`, `tip`, `warning`, `lore`), `text`, `icon?` | A bordered, tinted aside. This is the author's-note box. |
+| `callout` | `variant` (`author`, `tip`, `warning`, `lore`), `text`, `icon?` | A bordered, tinted aside. This is the author's-note box. `text` is PLAIN text here (the box already styles it italic); VTML tags are not parsed inside callouts and will show literally. |
 | `quest` | `questId?`, `items: [{ text, done? }]` | A checklist. See section 7. |
 | `figure` | `image`, `caption?`, `align?` (`left`, `right`, `full`) | An embedded illustration with an optional margin caption. |
 | `ledger` | `entries: [text, ...]` | A dated journal block in italic. |

@@ -36,6 +36,25 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     private GuidePack? current;
     private List<RichTextComponentBase[]>? pages;
     private Dictionary<GuidePack, List<RichTextComponentBase[]>>? cache;
+
+    /// <summary>Reveal-state stamp per cached chapter ('1'/'0' per gated section). A
+    /// chapter whose stamp drifts from the live state re-renders on next compose, so a
+    /// page earned mid-session takes its ink without a relog (the pagination cache
+    /// otherwise lives as long as the dialog).</summary>
+    private Dictionary<GuidePack, string>? cacheRevealSig;
+
+    private string RevealSig(GuidePack pack)
+    {
+        var host = capi.ModLoader.GetModSystem<AlmanacIlluminatedModSystem>();
+        if (host == null) return "";
+        System.Text.StringBuilder? sb = null;
+        foreach (var sec in pack.Sections)
+        {
+            if (string.IsNullOrEmpty(sec.RevealedBy)) continue;
+            (sb ??= new System.Text.StringBuilder()).Append(host.IsRevealed(sec.RevealedBy!) ? '1' : '0');
+        }
+        return sb?.ToString() ?? "";
+    }
     private int spreadIndex;
     private bool pendingOpenAtEnd;
     private bool warnedConflict;
@@ -518,14 +537,32 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
                 {
                     var psw = Stopwatch.StartNew();
                     cache = new Dictionary<GuidePack, List<RichTextComponentBase[]>>();
+                    cacheRevealSig = new Dictionary<GuidePack, string>();
                     foreach (var ch in library.Ordered)
+                    {
                         cache[ch] = ChapterRenderer.RenderPages(capi, ch, library, OnLinkClicked, contentW, contentH);
+                        cacheRevealSig[ch] = RevealSig(ch);
+                    }
                     IlluminatedLogger.Info(capi, "book",
                         $"Paginated {cache.Count} chapter(s) in {psw.ElapsedMilliseconds} ms");
                 }
-                pages = cache.TryGetValue(current, out var cp)
-                    ? cp
-                    : ChapterRenderer.RenderPages(capi, current, library, OnLinkClicked, contentW, contentH);
+
+                // Serve the cached pagination only while its reveal stamp still matches;
+                // an earned key mid-session re-renders just the affected chapter.
+                string sig = RevealSig(current);
+                if (cache.TryGetValue(current, out var cp)
+                    && cacheRevealSig != null
+                    && cacheRevealSig.TryGetValue(current, out string? oldSig)
+                    && oldSig == sig)
+                {
+                    pages = cp;
+                }
+                else
+                {
+                    pages = ChapterRenderer.RenderPages(capi, current, library, OnLinkClicked, contentW, contentH);
+                    cache[current] = pages;
+                    (cacheRevealSig ??= new Dictionary<GuidePack, string>())[current] = sig;
+                }
             }
             else
             {
