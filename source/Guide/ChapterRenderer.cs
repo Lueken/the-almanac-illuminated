@@ -62,6 +62,7 @@ public static class ChapterRenderer
 
         string initial = DeriveInitial(pack.Byline, pack.Title);
         var atoms = new List<Atom>();
+        var revealHost = capi.ModLoader.GetModSystem<AlmanacIlluminatedModSystem>();
 
         for (int si = 0; si < pack.Sections.Count; si++)
         {
@@ -70,6 +71,24 @@ public static class ChapterRenderer
             string? secTitle = GuideLibrary.Localize(sec.Title);
             if (!string.IsNullOrEmpty(secTitle))
                 title.Add(new RichTextComponent(capi, secTitle + "\n", heading) { UnscaledMarginTop = HeadingTopMargin });
+
+            // Unrevealed section: the title stays (it advertises that there is
+            // something to earn), the content gives way to a faint hint line.
+            // The knowledge is the reward; the page fills in once it is earned.
+            if (!string.IsNullOrEmpty(sec.RevealedBy)
+                && revealHost != null && !revealHost.IsRevealed(sec.RevealedBy!))
+            {
+                string hintText = GuideLibrary.Localize(sec.Hint)
+                    ?? Lang.Get("almanacilluminated:guide-unrevealed");
+                var hintFont = italic.Clone().WithColor(new[] { 0.38, 0.32, 0.25, 1.0 });
+                var hintAtom = new Atom { PageBreakBefore = sec.PageBreakBefore };
+                hintAtom.Comps.AddRange(title);
+                hintAtom.Comps.Add(new RichTextComponent(capi, hintText + "\n", hintFont));
+                atoms.Add(hintAtom);
+                if (si < pack.Sections.Count - 1)
+                    hintAtom.Comps.Add(new ClearFloatTextComponent(capi, SectionGap));
+                continue;
+            }
 
             var blockLists = new List<List<RichTextComponentBase>>();
             foreach (var block in sec.Blocks)

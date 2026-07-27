@@ -733,19 +733,25 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
                                 out string[] rightLabels, out List<Action> rightActions, out int rightActive)
     {
         var ordered = library.Ordered;
+        var pinned = library.PinnedChapters;
         var letters = new List<char>();
         var firstByLetter = new Dictionary<char, int>();
         for (int i = 0; i < ordered.Count; i++)
         {
+            // The pinned band gets named tabs of its own; letting it claim letters
+            // would make the thumb-index jump to curated chapters instead of the run.
+            if (pinned.Contains(ordered[i])) continue;
             char l = LetterOf(library.Title(ordered[i]));
             if (!firstByLetter.ContainsKey(l)) { firstByLetter[l] = i; letters.Add(l); }
         }
         letters.Sort();
 
         // The split point: the current chapter's letter. The fixed tabs (Contents,
-        // Journal, Crops) have no letter, so the whole alphabet sits on the right.
+        // Journal, Crops) have no letter, and neither does the pinned band, so on
+        // those the whole alphabet sits on the right.
+        bool curIsPinned = current != null && pinned.Contains(current);
         char cur = (!journalMode && !cropsMode && !weatherMode && externalTab == null
-                && current != null && library.OrderIndex(current) >= 0)
+                && current != null && !curIsPinned && library.OrderIndex(current) >= 0)
             ? LetterOf(library.Title(current)) : '\0';
 
         var lLabels = new List<string> { "Contents", "Journal", "Crops", "Weather" };
@@ -771,8 +777,18 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         leftActive = modActive >= 0 ? modActive
             : weatherMode ? 3 : cropsMode ? 2 : journalMode ? 1 : (current == library.ContentsPage ? 0 : -1);
 
+        // The pinned band heads the right strip as named tabs, always visible
+        // regardless of how deep into the alphabet the reader is.
         var rLabels = new List<string>();
         rightActions = new List<Action>();
+        int pinnedActive = -1;
+        foreach (var p in pinned)
+        {
+            if (curIsPinned && p == current) pinnedActive = rLabels.Count;
+            var chapter = p;
+            rLabels.Add(library.Title(p));
+            rightActions.Add(() => OpenChapter(chapter));
+        }
         foreach (char l in letters)
         {
             if (l < cur) continue;
@@ -781,7 +797,8 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
             rightActions.Add(() => OpenChapter(ordered[idx]));
         }
         rightLabels = rLabels.ToArray();
-        rightActive = (cur != '\0') ? rLabels.IndexOf(cur.ToString()) : -1;
+        rightActive = pinnedActive >= 0 ? pinnedActive
+            : (cur != '\0') ? rLabels.IndexOf(cur.ToString()) : -1;
     }
 
     /// <summary>The first letter a chapter indexes under, ignoring a leading "The ".</summary>

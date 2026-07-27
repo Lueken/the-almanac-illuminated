@@ -67,8 +67,9 @@ The top level of every guide file.
 | `byline` | no | Attribution line. |
 | `icon` | no | An itemstack code or texture path for the chapter's index icon. |
 | `accentColor` | no | Hex. The chapter's identity color, used on drop-caps and rules. Defaults to a parchment neutral. |
-| `order` | no | Gate-less chapters only. Integer sort position among front matter, lower first. Ties break by `id`. Ignored on gated chapters. |
+| `order` | no | Gate-less chapters only. Integer sort position among front matter, lower first. Ties break by `id`. Ignored on gated chapters, except inside the pinned band. |
 | `overview` | no | Gate-less chapters only. Pins this chapter first in the front matter and makes it the book's landing page. For the server overview. See section 11. |
+| `pinned` | no | Lifts the chapter into the pinned band: named tabs at the top of the right thumb-index, ahead of the letters, in reading order between the overview and the front matter. Allowed on gated chapters. The band sorts by `order` then `id`. Ignored on ribbon-tab chapters, the overview, and the contents page. |
 | `sections` | yes | The ordered content. See section 4. |
 
 Identity is bounded. A chapter sets its `icon`, its `accentColor`, and its content. It does not set its placement, its layout, or its fonts. A chapter carries its own identity. The book keeps its own.
@@ -80,6 +81,8 @@ A gated chapter does not choose where it sits. The book orders gated chapters al
 Gate-less chapters are different. They are front matter, and they belong to the pack rather than to a competing mod, so the pack owner may order them with the `order` field. Front matter sorts by `order`, then by `id`, and sits ahead of the alphabetical run. `order` plus `id` is a total ordering, so front matter from two installed packs interleaves predictably instead of colliding. One gate-less chapter may set `overview: true` to pin ahead of all other front matter and become the book's landing page. See section 11.
 
 This split is deliberate. The lever exists only where one owner controls the content. Where chapters from different authors compete under a mod name, placement stays the platform's call.
+
+The pinned band is the second exception, and it keeps the rule's spirit. `pinned: true` lifts a chapter (gated or not) out of the alphabetical run and into a named-tab band at the top of the right thumb-index. Placement inside the band is the same total ordering front matter uses (`order`, then `id`), so pinned chapters from different packs interleave predictably instead of colliding. The band is the server-curation shelf: the place a pack owner promotes the guides that define their server, without disturbing how the alphabetical run protects everyone else.
 
 ---
 
@@ -102,6 +105,8 @@ Two hints return control where it matters.
 - `id` is optional. It is a stable anchor for internal links and is never shown to the reader. Set it when you want links to point at this section. Unlike `title`, it must not change once links rely on it. See section 8.
 - `keepTogether: true`. The engine does not split the section across a page boundary. A section that does not fit moves whole to the next page. Use it for a recipe and its caption, a callout, or a short step list.
 - `pageBreakBefore: true`. The section starts a new page, the left page of the next spread. Use it to open a major topic.
+- `revealedBy` (optional). A reveal key, `namespace:rest` (for example `almanactcm:met-first-mass`). While the key is unearned, the section's title still renders but its blocks give way to a faint hint line, so the reader knows there is something to earn without being told how. Reveal state comes from a provider the owning mod registers (`RegisterRevealProvider` on the mod system; TCM backs `almanactcm` with its per-player Knowledge store). The degradation rule is absolute: a key whose namespace has no registered provider renders as revealed. A guide authored against an absent mod must never produce a permanently dead page.
+- `hint` (optional). The placeholder line shown while unrevealed. A literal or a `#langkey`. Defaults to the book's own line ("This page waits for practiced hands.").
 
 This is the hybrid model. Auto-flow handles the common case and never overflows. The two hints buy back the control an art-directed page needs. `title` is optional. Omit it for a continuation section.
 

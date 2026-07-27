@@ -51,6 +51,44 @@ public class AlmanacIlluminatedModSystem : ModSystem
         if (capi != null) IlluminatedLogger.Info(capi, "tabs", $"External book tab registered: {tab.Label}");
     }
 
+    // Reveal providers, keyed by the namespace before the ':' in a section's
+    // revealedBy key. TCM registers "almanactcm" backed by its Knowledge store.
+    private readonly Dictionary<string, System.Func<string, bool>> revealProviders =
+        new(System.StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Registers a reveal provider for one key namespace (client side). Guide sections
+    /// with revealedBy "<paramref name="keyNamespace"/>:..." render only when
+    /// <paramref name="isRevealed"/> returns true for the full key. Call from your mod's
+    /// StartClientSide, any time before the book first opens.
+    /// </summary>
+    public void RegisterRevealProvider(string keyNamespace, System.Func<string, bool> isRevealed)
+    {
+        if (string.IsNullOrEmpty(keyNamespace) || isRevealed == null) return;
+        revealProviders[keyNamespace] = isRevealed;
+        if (capi != null) IlluminatedLogger.Info(capi, "reveal", $"Reveal provider registered: {keyNamespace}");
+    }
+
+    /// <summary>
+    /// Whether a revealedBy key is earned. The degradation rule is deliberate: a key
+    /// whose namespace has NO registered provider is treated as revealed, so a guide
+    /// authored against an absent mod never produces a permanently dead page. A
+    /// provider that throws is treated the same way, for the same reason.
+    /// </summary>
+    public bool IsRevealed(string key)
+    {
+        if (string.IsNullOrEmpty(key)) return true;
+        int i = key.IndexOf(':');
+        string ns = i > 0 ? key.Substring(0, i) : key;
+        if (!revealProviders.TryGetValue(ns, out var provider)) return true;
+        try { return provider(key); }
+        catch (System.Exception e)
+        {
+            if (capi != null) IlluminatedLogger.Warn(capi, "reveal", $"provider '{ns}' threw on '{key}' ({e.Message}); treating as revealed");
+            return true;
+        }
+    }
+
     public override void StartPre(ICoreAPI api)
     {
         // `almanac` is a custom asset category. The disk scanner only indexes

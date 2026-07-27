@@ -33,6 +33,13 @@ public class GuidePack
     /// among them by `order`. For a mod that wants dedicated tabs, not an index entry.</summary>
     public bool RibbonTab;
 
+    /// <summary>Lifts this chapter into the pinned band: named tabs at the top of the
+    /// right thumb-index, ahead of the letters, sorted by `order` then `id`. Unlike the
+    /// A-Z run this is allowed on gated chapters — the band is the server-curation shelf
+    /// (the schema's no-placement rule protects the alphabetical run, and the pinned
+    /// band keeps its spirit through the same total ordering front matter uses).</summary>
+    public bool Pinned;
+
     public List<GuideSection> Sections = new();
 
     /// <summary>Asset location this pack was read from. For logs and diagnostics.</summary>
@@ -45,6 +52,16 @@ public class GuideSection
     public string? Title;
     public bool PageBreakBefore;
     public bool KeepTogether;
+
+    /// <summary>Reveal key ("namespace:rest"). The section's blocks render only when the
+    /// registered reveal provider for that namespace says the key is earned. No provider
+    /// registered = always visible (a key nobody can set must never mean a dead page).</summary>
+    public string? RevealedBy;
+
+    /// <summary>Optional placeholder line shown while the section is unrevealed. Falls
+    /// back to the shipped default. Runs through the '#langkey' convention.</summary>
+    public string? Hint;
+
     public List<GuideBlock> Blocks = new();
 }
 

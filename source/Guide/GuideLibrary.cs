@@ -44,6 +44,11 @@ public sealed class GuideLibrary
     /// tabs (grouped with computed tabs, sorted by `order`), never in the A-Z flow.</summary>
     public IReadOnlyList<GuidePack> RibbonChapters { get; }
 
+    /// <summary>The pinned band: chapters lifted above the A-Z run as named tabs at the
+    /// top of the right thumb-index, sorted by `order` then `id`. Gated chapters may pin;
+    /// the deterministic total ordering is what keeps competing packs from colliding.</summary>
+    public IReadOnlyList<GuidePack> PinnedChapters { get; }
+
     public GuideLibrary(ICoreClientAPI capi, List<GuidePack> packs)
     {
         this.capi = capi;
@@ -64,6 +69,14 @@ public sealed class GuideLibrary
 
         // Ribbon-tab chapters are pulled out of the reading flow and shown as tabs.
         RibbonChapters = packs.Where(p => p.RibbonTab).ToList();
+
+        // The pinned band. Ribbon tabs, the overview, and the contents page have their
+        // own homes already; pinning them too would double-place them, so it is ignored.
+        PinnedChapters = packs
+            .Where(p => p.Pinned && !p.RibbonTab && p != Overview && p != ContentsPage)
+            .OrderBy(p => p.Order ?? int.MaxValue)
+            .ThenBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         Ordered = BuildOrder(packs, Overview, ContentsPage);
 
@@ -130,21 +143,27 @@ public sealed class GuideLibrary
     private List<GuidePack> BuildOrder(List<GuidePack> packs, GuidePack? overview, GuidePack? contents)
     {
         bool IsFront(GuidePack p) => string.IsNullOrEmpty(p.Gate);
+        bool InPinnedBand(GuidePack p) => PinnedChapters.Contains(p);
 
-        // Front matter minus the overview winner, the contents page, and any ribbon
-        // tabs, sorted by order then id. Demoted overview claimants fall in here.
-        var front = packs.Where(p => IsFront(p) && p != overview && p != contents && !p.RibbonTab)
+        // Front matter minus the overview winner, the contents page, any ribbon
+        // tabs, and the pinned band, sorted by order then id. Demoted overview
+        // claimants fall in here.
+        var front = packs.Where(p => IsFront(p) && p != overview && p != contents && !p.RibbonTab && !InPinnedBand(p))
             .OrderBy(p => p.Order ?? int.MaxValue)
             .ThenBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var gated = packs.Where(p => !IsFront(p) && p != contents && !p.RibbonTab)
+        var gated = packs.Where(p => !IsFront(p) && p != contents && !p.RibbonTab && !InPinnedBand(p))
             .OrderBy(p => ModName(p.Gate!), StringComparer.OrdinalIgnoreCase)
             .ThenBy(p => Title(p), StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        // Reading order: overview, then the pinned band, then front matter, then the
+        // A-Z run. The band sits ahead of front matter because it is the curated core
+        // of the manual; the overview stays the landing page.
         var ordered = new List<GuidePack>();
-        if (overview != null) ordered.Add(overview);   // pinned first
+        if (overview != null) ordered.Add(overview);
+        ordered.AddRange(PinnedChapters);
         ordered.AddRange(front);
         ordered.AddRange(gated);
         return ordered;
