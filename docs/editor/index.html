@@ -1,0 +1,611 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Almanac — Guide Editor</title>
+<style>
+  :root{
+    --parch:#ece1c4; --parch-2:#e3d6b4; --ink:#231a10; --ink-soft:#5c4c39;
+    --rule:#c9b48a; --accent:#7a5a2e;
+    --panel:#f6f1e4; --line:#d6c9a8; --bg:#2b2724;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:#e9e2d4;
+       font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+         padding:12px 18px;background:#221e1b;border-bottom:1px solid #3d372f;position:sticky;top:0;z-index:20}
+  header h1{margin:0;font:600 17px/1.2 Georgia,'Times New Roman',serif;letter-spacing:.03em}
+  header .sub{color:#9c9384;font-size:13px}
+  .grow{flex:1}
+  button{font:inherit;border:1px solid #4a433a;background:#332e29;color:#e9e2d4;
+         padding:6px 12px;border-radius:5px;cursor:pointer}
+  button:hover{background:#3d372f}
+  button.primary{background:#6b5326;border-color:#8a6c33;color:#fbf5e6}
+  button.primary:hover{background:#7d6130}
+  button.tiny{padding:2px 7px;font-size:12px}
+  button.danger:hover{background:#5c2a24;border-color:#7d3a31}
+
+  .wrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0;
+        height:calc(100vh - 53px)}
+  @media (max-width:1000px){.wrap{grid-template-columns:1fr;height:auto}}
+  .col{overflow:auto;padding:16px 18px 60px}
+  .col.right{background:#232019;border-left:1px solid #3d372f}
+
+  .card{background:#302b26;border:1px solid #443d34;border-radius:7px;padding:12px 14px;margin:0 0 14px}
+  .card h2{margin:0 0 10px;font:600 14px/1.2 system-ui;letter-spacing:.06em;
+           text-transform:uppercase;color:#c3b79f}
+  .card h3{margin:0;font:600 14px/1.2 system-ui;color:#ded4bf}
+  .rowhead{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+
+  label{display:block;font-size:12px;color:#a99e8a;margin:0 0 3px;letter-spacing:.02em}
+  .field{margin:0 0 9px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  input[type=text],input[type=number],select,textarea{
+    width:100%;font:inherit;padding:5px 8px;border-radius:4px;
+    border:1px solid #4d453b;background:#26221e;color:#f0e9db}
+  textarea{min-height:64px;resize:vertical;font-family:Georgia,serif}
+  input:focus,select:focus,textarea:focus{outline:2px solid #7d6130;outline-offset:-1px}
+  .check{display:flex;align-items:center;gap:7px;font-size:13px;color:#c9bfa9}
+  .check input{width:15px;height:15px}
+  .hint{font-size:12px;color:#8d8474;margin-top:3px}
+
+  .section{border-left:3px solid #6b5326}
+  .block{background:#2a2621;border:1px solid #3f3830;border-radius:6px;padding:10px 11px;margin:0 0 9px}
+  .block .rowhead h3{font-size:13px;color:#c8bda6}
+  .btype{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8e836f}
+  .listrow{display:flex;gap:6px;margin-bottom:5px}
+  .listrow input{flex:1}
+
+  .tabs{display:flex;gap:6px;margin-bottom:12px}
+  .tabs button.on{background:#6b5326;border-color:#8a6c33;color:#fbf5e6}
+  pre.json{background:#1c1916;border:1px solid #3d372f;border-radius:6px;padding:12px;
+           overflow:auto;font:13px/1.45 ui-monospace,Consolas,monospace;color:#d8e6c8;white-space:pre;margin:0}
+  .issues{margin:0 0 12px;padding:0;list-style:none}
+  .issues li{padding:6px 10px;border-radius:5px;margin-bottom:5px;font-size:13px}
+  .issues .err{background:#4a2420;border:1px solid #7d3a31;color:#f3cdc6}
+  .issues .warn{background:#453a1e;border:1px solid #7d6a31;color:#f0e2b8}
+  .issues .ok{background:#263a24;border:1px solid #3f6b39;color:#cfe8c9}
+
+  /* ---- book preview (approximate; the real one is .almpreview in game) ---- */
+  .book{background:var(--parch);color:var(--ink);border-radius:4px;padding:26px 30px;
+        font-family:Georgia,'Times New Roman',serif;
+        background-image:repeating-linear-gradient(0deg,rgba(0,0,0,.012) 0 2px,transparent 2px 4px),
+                         repeating-linear-gradient(90deg,rgba(0,0,0,.012) 0 2px,transparent 2px 4px);
+        box-shadow:inset 0 0 60px rgba(90,60,20,.10)}
+  .book .runhead{display:flex;align-items:center;gap:10px;justify-content:center;
+                 color:#5a4830;font-size:11px;letter-spacing:.34em;text-transform:uppercase;margin-bottom:4px}
+  .book .runhead .r{flex:0 0 60px;height:1px;background:#a9906a}
+  .book .byline{text-align:center;font-style:italic;color:#6b5a41;font-size:13px;margin:0 0 16px}
+  .book h4{margin:18px 0 6px;font-size:14px;letter-spacing:.14em;text-transform:uppercase;font-weight:700}
+  .book p{margin:0 0 10px;font-size:15.5px;line-height:1.5}
+  .book .dropcap{float:left;font-size:46px;line-height:.86;padding:2px 7px 0 0;font-weight:700}
+  .book .step{display:flex;gap:9px;align-items:flex-start;margin:0 0 7px}
+  .book .num{flex:0 0 20px;height:20px;border-radius:50%;display:grid;place-items:center;
+             color:#f6efdd;font-size:12px;font-weight:700;margin-top:1px}
+  .book .bullet{flex:0 0 20px;text-align:center}
+  .book .mats{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 12px}
+  .book .mat{width:60px;text-align:center;font-size:11px;color:#5c4c39}
+  .book .mat .slot{width:44px;height:44px;margin:0 auto 3px;border:1px solid #b9a37c;
+                   background:#f3ead2;border-radius:3px;display:grid;place-items:center;font-size:9px;color:#93815f;
+                   overflow:hidden;word-break:break-all;padding:2px}
+  .book .callout{border:1.5px solid;border-radius:4px;padding:10px 12px;margin:12px 0;font-style:italic;font-size:14.5px}
+  .book .callout .seal{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;
+                       color:#fbf3df;font-style:normal;font-weight:700;font-size:12px;margin-right:8px;vertical-align:middle}
+  .book .callout .lbl{font-weight:700;font-style:italic}
+  .book .quest{margin:0 0 5px;font-style:italic;font-size:14.5px}
+  .book .quest.done{color:#7b6b55;text-decoration:line-through}
+  .book .ledger{font-style:italic;font-size:14.5px;margin:0 0 4px;
+                border-bottom:1px solid rgba(120,95,60,.28);padding-bottom:3px}
+  .book .divider{display:flex;align-items:center;gap:10px;margin:14px 0}
+  .book .divider .r{flex:1;height:1px}
+  .book .divider .d{font-size:11px}
+  .book .figure{border:1px solid #b9a37c;background:#f3ead2;border-radius:3px;padding:26px;text-align:center;
+                color:#93815f;font-size:12px;margin:10px 0 4px;word-break:break-all}
+  .book .cap{text-align:center;font-style:italic;font-size:13px;color:#6b5a41;margin:0 0 12px}
+  .book a.xref{color:#8a5a22;text-decoration:underline}
+  .book .recipe{border:1px dashed #b9a37c;padding:10px;text-align:center;color:#7d6a4c;font-size:12.5px;margin:10px 0}
+  .book .contents{color:#7b6b55;font-size:14px}
+  .book .pagenum{text-align:center;color:#6b5a41;font-style:italic;font-size:13px;margin-top:20px}
+  .book .locked{font-style:italic;color:#8a795f;font-size:14.5px}
+  .muted{color:#8d8474;font-size:12.5px}
+  .empty{color:#8d8474;font-style:italic;padding:8px 0}
+  .filename{font:13px ui-monospace,Consolas,monospace;color:#c3b79f;background:#1c1916;
+            border:1px solid #3d372f;border-radius:5px;padding:7px 10px;margin:0 0 12px;overflow:auto;white-space:nowrap}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>The Almanac · Guide Editor</h1>
+  <span class="sub">schema v1 · builds a guide-pack JSON for your mod</span>
+  <span class="grow"></span>
+  <button id="btn-import">Import JSON…</button>
+  <button id="btn-example">Load example</button>
+  <button id="btn-copy" class="primary">Copy JSON</button>
+  <button id="btn-download" class="primary">Download</button>
+  <input type="file" id="file" accept=".json,application/json" hidden>
+</header>
+
+<div class="wrap">
+  <div class="col left" id="editor"></div>
+  <div class="col right">
+    <div class="tabs">
+      <button id="tab-preview" class="on">Preview</button>
+      <button id="tab-json">JSON</button>
+    </div>
+    <div class="filename" id="filename"></div>
+    <ul class="issues" id="issues"></ul>
+    <div id="pane-preview"><div class="book" id="book"></div></div>
+    <div id="pane-json" hidden><pre class="json" id="json"></pre></div>
+  </div>
+</div>
+
+<script>
+/* ---------------------------------------------------------------------------
+   Block spec — mirrors docs/SCHEMA.md §5 and docs/guide-pack.schema.json.
+   Field types: text, area (multiline), bool, num, select, list (string array),
+   mats (material objects), quest (quest items).
+--------------------------------------------------------------------------- */
+const BLOCKS = {
+  heading:   {label:'Heading', fields:[['text','Text','text',true],['level','Level (1–3)','num']]},
+  paragraph: {label:'Paragraph', fields:[['text','Text (inline VTML allowed)','area',true],['dropcap','Illuminated first letter','bool']]},
+  dropcap:   {label:'Drop cap', fields:[['letter','Letter','text',true]]},
+  steps:     {label:'Steps', fields:[['items','Steps','list',true],['ordered','Numbered (off = bulleted)','bool',false,true]]},
+  materials: {label:'Materials', fields:[['items','Items','mats',true]]},
+  recipe:    {label:'Recipe', fields:[['recipe','Recipe code (one recipe)','text'],['output','Output item code (every recipe making it)','text']]},
+  callout:   {label:'Callout', fields:[['variant','Variant','select',true,'author',['author','tip','warning','lore']],['text','Text (plain — VTML is NOT parsed here)','area',true],['icon','Icon code (optional)','text']]},
+  quest:     {label:'Quest checklist', fields:[['questId','Quest id (Progression Framework, optional)','text'],['items','Objectives','quest',true]]},
+  figure:    {label:'Figure', fields:[['image','Image path (domain:textures/…png)','text',true],['caption','Caption','text'],['align','Align','select',false,'full',['full','left','right']]]},
+  ledger:    {label:'Field ledger', fields:[['entries','Entries','list',true]]},
+  divider:   {label:'Divider', fields:[['ornament','Ornament (optional)','text']]},
+  link:      {label:'Link', fields:[['to','Target (almanac://chapter/id · handbook://page · https://…)','text',true],['text','Link text','text',true]]},
+  contents:  {label:'Contents (auto mod list)', fields:[['include','Include','select',false,'added',['added','all']]]},
+  table:     {label:'Table (deferred to v0.2)', fields:[]},
+};
+const CALLOUT_COLORS = {
+  author:{fill:'#f7f0d9',line:'#b82114'}, tip:{fill:'#e8f5e3',line:'#267333'},
+  warning:{fill:'#f7edd1',line:'#a6660d'}, lore:{fill:'#e8e6f7',line:'#40338c'},
+};
+
+let doc = blankDoc();
+function blankDoc(){
+  return {schemaVersion:1, id:'', gate:'', title:'', subtitle:'', byline:'', icon:'',
+          accentColor:'', order:null, overview:false, pinned:false, sections:[newSection()]};
+}
+function newSection(){ return {id:'', title:'', keepTogether:false, pageBreakBefore:false, revealedBy:'', hint:'', blocks:[]}; }
+function newBlock(type){
+  const b = {type};
+  const spec = BLOCKS[type];
+  if(spec) for(const [k,,t,,def] of spec.fields){
+    if(def !== undefined) b[k] = def;
+    else if(t==='list'||t==='mats'||t==='quest') b[k] = [];
+  }
+  return b;
+}
+
+/* ------------------------------ editor render ---------------------------- */
+const $ = s => document.querySelector(s);
+const el = (tag, cls, txt) => { const n=document.createElement(tag); if(cls)n.className=cls; if(txt!=null)n.textContent=txt; return n; };
+
+function field(label, value, oninput, opts={}){
+  const w = el('div','field');
+  if(label) w.appendChild(el('label',null,label));
+  let inp;
+  if(opts.type==='area'){ inp = el('textarea'); }
+  else if(opts.type==='select'){
+    inp = el('select');
+    (opts.options||[]).forEach(o=>{ const op=el('option',null,o); op.value=o; inp.appendChild(op); });
+  } else { inp = el('input'); inp.type = opts.type==='num' ? 'number' : 'text'; }
+  inp.value = value==null ? '' : value;
+  if(opts.placeholder) inp.placeholder = opts.placeholder;
+  inp.addEventListener('input', ()=>{ oninput(inp.value); refresh(); });
+  w.appendChild(inp);
+  if(opts.hint) w.appendChild(el('div','hint',opts.hint));
+  return w;
+}
+function checkbox(label, value, onchange){
+  const w = el('div','field'); const l = el('label','check');
+  const c = el('input'); c.type='checkbox'; c.checked=!!value;
+  c.addEventListener('change', ()=>{ onchange(c.checked); refresh(); });
+  l.appendChild(c); l.appendChild(el('span',null,label)); w.appendChild(l); return w;
+}
+function listEditor(arr, onchange, placeholder){
+  const w = el('div');
+  arr.forEach((v,i)=>{
+    const row = el('div','listrow');
+    const inp = el('input'); inp.type='text'; inp.value=v; inp.placeholder=placeholder||'';
+    inp.addEventListener('input', ()=>{ arr[i]=inp.value; refresh(); });
+    const del = el('button','tiny danger','×');
+    del.onclick = ()=>{ arr.splice(i,1); onchange(); render(); };
+    row.appendChild(inp); row.appendChild(del); w.appendChild(row);
+  });
+  const add = el('button','tiny','+ add');
+  add.onclick = ()=>{ arr.push(''); onchange(); render(); };
+  w.appendChild(add);
+  return w;
+}
+function objListEditor(arr, cols, onchange){
+  const w = el('div');
+  arr.forEach((o,i)=>{
+    const row = el('div','listrow');
+    cols.forEach(([k,ph,type])=>{
+      let inp;
+      if(type==='bool'){
+        const l = el('label','check'); inp = el('input'); inp.type='checkbox'; inp.checked=!!o[k];
+        inp.addEventListener('change',()=>{ o[k]=inp.checked; refresh(); });
+        l.appendChild(inp); l.appendChild(el('span',null,ph)); row.appendChild(l); return;
+      }
+      inp = el('input'); inp.type='text'; inp.value=o[k]||''; inp.placeholder=ph;
+      inp.addEventListener('input', ()=>{ o[k]=inp.value; refresh(); });
+      row.appendChild(inp);
+    });
+    const del = el('button','tiny danger','×');
+    del.onclick = ()=>{ arr.splice(i,1); onchange(); render(); };
+    row.appendChild(del); w.appendChild(row);
+  });
+  const add = el('button','tiny','+ add');
+  add.onclick = ()=>{ const o={}; cols.forEach(([k])=>o[k]=''); arr.push(o); onchange(); render(); };
+  w.appendChild(add); return w;
+}
+
+function render(){
+  const root = $('#editor'); root.innerHTML='';
+
+  /* --- chapter manifest --- */
+  const m = el('div','card');
+  m.appendChild(el('h2',null,'Chapter'));
+  const g1 = el('div','grid2');
+  g1.appendChild(field('Chapter id (namespace it: venah:fieldwright)', doc.id, v=>doc.id=v, {placeholder:'yourname:chapter'}));
+  g1.appendChild(field('Gate — modid required to show (blank = always)', doc.gate, v=>doc.gate=v, {placeholder:'yourmodid'}));
+  m.appendChild(g1);
+  m.appendChild(field('Title', doc.title, v=>doc.title=v, {placeholder:'Fieldwright'}));
+  const g2 = el('div','grid2');
+  g2.appendChild(field('Subtitle', doc.subtitle, v=>doc.subtitle=v));
+  g2.appendChild(field('Byline', doc.byline, v=>doc.byline=v, {placeholder:'set down by Venah'}));
+  m.appendChild(g2);
+  const g3 = el('div','grid3');
+  g3.appendChild(field('Icon (item code or texture)', doc.icon, v=>doc.icon=v));
+  g3.appendChild(field('Accent colour', doc.accentColor, v=>doc.accentColor=v, {placeholder:'#7a5a2e'}));
+  g3.appendChild(field('Order (front matter only)', doc.order, v=>doc.order = v===''?null:parseInt(v,10), {type:'num'}));
+  m.appendChild(g3);
+  const g4 = el('div','grid2');
+  g4.appendChild(checkbox('Overview (landing page — gate-less only)', doc.overview, v=>doc.overview=v));
+  g4.appendChild(checkbox('Pinned (named tab above the letters)', doc.pinned, v=>doc.pinned=v));
+  m.appendChild(g4);
+  m.appendChild(el('div','hint','Any text field takes a literal or a #langkey (e.g. #yourmod:chapter-title).'));
+  root.appendChild(m);
+
+  /* --- sections --- */
+  doc.sections.forEach((sec,si)=>{
+    const c = el('div','card section');
+    const head = el('div','rowhead');
+    head.appendChild(el('h3',null,`Section ${si+1}`));
+    head.appendChild(el('span','grow'));
+    const up = el('button','tiny','↑'); up.onclick=()=>{ if(si>0){ doc.sections.splice(si-1,0,doc.sections.splice(si,1)[0]); render(); } };
+    const dn = el('button','tiny','↓'); dn.onclick=()=>{ if(si<doc.sections.length-1){ doc.sections.splice(si+1,0,doc.sections.splice(si,1)[0]); render(); } };
+    const rm = el('button','tiny danger','remove'); rm.onclick=()=>{ doc.sections.splice(si,1); if(!doc.sections.length) doc.sections.push(newSection()); render(); };
+    head.append(up,dn,rm); c.appendChild(head);
+
+    const sg = el('div','grid2');
+    sg.appendChild(field('Title (blank = continuation)', sec.title, v=>sec.title=v));
+    sg.appendChild(field('Section id (link anchor)', sec.id, v=>sec.id=v, {placeholder:'getting-started'}));
+    c.appendChild(sg);
+    const sg2 = el('div','grid2');
+    sg2.appendChild(checkbox('Keep together on one page', sec.keepTogether, v=>sec.keepTogether=v));
+    sg2.appendChild(checkbox('Start a new page', sec.pageBreakBefore, v=>sec.pageBreakBefore=v));
+    c.appendChild(sg2);
+    const sg3 = el('div','grid2');
+    sg3.appendChild(field('Revealed by (reveal key)', sec.revealedBy, v=>sec.revealedBy=v, {placeholder:'almanactcm:met-first-mass'}));
+    sg3.appendChild(field('Hint while unrevealed', sec.hint, v=>sec.hint=v));
+    c.appendChild(sg3);
+
+    /* blocks */
+    if(!sec.blocks.length) c.appendChild(el('div','empty','No blocks yet — add one below.'));
+    sec.blocks.forEach((b,bi)=>c.appendChild(blockCard(sec,b,bi)));
+
+    const addRow = el('div','rowhead');
+    const sel = el('select');
+    Object.entries(BLOCKS).forEach(([k,v])=>{ const o=el('option',null,v.label); o.value=k; sel.appendChild(o); });
+    const add = el('button','tiny','+ add block');
+    add.onclick = ()=>{ sec.blocks.push(newBlock(sel.value)); render(); };
+    addRow.append(sel,add); c.appendChild(addRow);
+    root.appendChild(c);
+  });
+
+  const addSec = el('button','primary','+ add section');
+  addSec.onclick = ()=>{ doc.sections.push(newSection()); render(); };
+  root.appendChild(addSec);
+
+  refresh();
+}
+
+function blockCard(sec, b, bi){
+  const c = el('div','block');
+  const head = el('div','rowhead');
+  head.appendChild(el('span','btype', (BLOCKS[b.type]||{}).label || b.type));
+  head.appendChild(el('span','grow'));
+  const up = el('button','tiny','↑'); up.onclick=()=>{ if(bi>0){ sec.blocks.splice(bi-1,0,sec.blocks.splice(bi,1)[0]); render(); } };
+  const dn = el('button','tiny','↓'); dn.onclick=()=>{ if(bi<sec.blocks.length-1){ sec.blocks.splice(bi+1,0,sec.blocks.splice(bi,1)[0]); render(); } };
+  const rm = el('button','tiny danger','×'); rm.onclick=()=>{ sec.blocks.splice(bi,1); render(); };
+  head.append(up,dn,rm); c.appendChild(head);
+
+  const spec = BLOCKS[b.type];
+  if(!spec){ c.appendChild(el('div','empty','Unknown block type.')); return c; }
+
+  spec.fields.forEach(([k,label,type,,def,options])=>{
+    if(type==='bool'){ c.appendChild(checkbox(label, b[k], v=>b[k]=v)); return; }
+    if(type==='list'){
+      const w=el('div','field'); w.appendChild(el('label',null,label));
+      if(!Array.isArray(b[k])) b[k]=[];
+      w.appendChild(listEditor(b[k], ()=>{}, 'text')); c.appendChild(w); return;
+    }
+    if(type==='mats'){
+      const w=el('div','field'); w.appendChild(el('label',null,label));
+      if(!Array.isArray(b[k])) b[k]=[];
+      w.appendChild(objListEditor(b[k], [['code','game:ingot-iron'],['label','label (optional)'],['count','count']], ()=>{}));
+      c.appendChild(w); return;
+    }
+    if(type==='quest'){
+      const w=el('div','field'); w.appendChild(el('label',null,label));
+      if(!Array.isArray(b[k])) b[k]=[];
+      w.appendChild(objListEditor(b[k], [['text','objective'],['done','done','bool']], ()=>{}));
+      c.appendChild(w); return;
+    }
+    c.appendChild(field(label, b[k], v=>b[k]=(type==='num' && v!=='')?parseInt(v,10):v,
+      {type, options, placeholder: def||''}));
+  });
+  return c;
+}
+
+/* ------------------------------ output ----------------------------------- */
+function buildJson(){
+  const o = {schemaVersion:1};
+  const put=(k,v)=>{ if(v!==''&&v!=null&&v!==false) o[k]=v; };
+  put('id',doc.id); put('gate',doc.gate); put('title',doc.title);
+  put('subtitle',doc.subtitle); put('byline',doc.byline); put('icon',doc.icon);
+  put('accentColor',doc.accentColor);
+  if(doc.order!=null && !Number.isNaN(doc.order)) o.order=doc.order;
+  if(doc.overview) o.overview=true;
+  if(doc.pinned) o.pinned=true;
+  o.sections = doc.sections.map(s=>{
+    const x={};
+    if(s.id) x.id=s.id;
+    if(s.title) x.title=s.title;
+    if(s.keepTogether) x.keepTogether=true;
+    if(s.pageBreakBefore) x.pageBreakBefore=true;
+    if(s.revealedBy) x.revealedBy=s.revealedBy;
+    if(s.hint) x.hint=s.hint;
+    x.blocks = s.blocks.map(b=>{
+      const y={type:b.type};
+      const spec=BLOCKS[b.type]; if(!spec) return y;
+      spec.fields.forEach(([k,,t])=>{
+        const v=b[k];
+        if(v===undefined||v===null||v==='') return;
+        if(t==='list'){ const a=v.filter(z=>z!==''); if(a.length) y[k]=a; return; }
+        if(t==='mats'){ const a=v.filter(z=>z.code).map(z=>{const m={code:z.code}; if(z.label)m.label=z.label; if(z.count)m.count=parseInt(z.count,10)||1; return m;}); if(a.length) y[k]=a; return; }
+        if(t==='quest'){ const a=v.filter(z=>z.text).map(z=>{const m={text:z.text}; if(z.done)m.done=true; return m;}); if(a.length) y[k]=a; return; }
+        if(t==='bool'){ if(v===true||v===false) y[k]=v; return; }
+        y[k]=v;
+      });
+      return y;
+    });
+    return x;
+  });
+  return o;
+}
+
+function validate(o){
+  const out=[];
+  if(!o.id) out.push(['err','Chapter needs an id — namespace it, e.g. yourname:chapter.']);
+  else if(!o.id.includes(':')) out.push(['warn','Chapter id has no namespace; collisions with other authors become possible.']);
+  if(!o.title) out.push(['err','Chapter needs a title.']);
+  if(o.accentColor && !/^#[0-9a-fA-F]{6}$/.test(o.accentColor)) out.push(['err','accentColor must look like #7a5a2e.']);
+  if(o.overview && o.gate) out.push(['err','overview is for gate-less chapters only — clear the gate or the overview flag.']);
+  if(o.order!=null && o.gate) out.push(['warn','order is ignored on gated chapters (except inside the pinned band).']);
+
+  (o.sections||[]).forEach((s,i)=>{
+    const n = s.title ? `"${s.title}"` : `#${i+1}`;
+    if(!s.blocks || !s.blocks.length) out.push(['warn',`Section ${n} has no blocks.`]);
+    if(s.revealedBy && !s.revealedBy.includes(':')) out.push(['err',`Section ${n}: revealedBy must be namespace:key.`]);
+    (s.blocks||[]).forEach(b=>{
+      const L = (BLOCKS[b.type]||{}).label || b.type;
+      if(b.type==='table') out.push(['warn',`${L} is deferred to v0.2 — the engine skips it and warns.`]);
+      if(b.type==='recipe'){
+        if(b.recipe && b.output) out.push(['err','Recipe block: set recipe OR output, never both.']);
+        if(!b.recipe && !b.output) out.push(['err','Recipe block needs a recipe code or an output item code.']);
+      }
+      if(b.type==='heading' && !b.text) out.push(['err','Heading needs text.']);
+      if(b.type==='paragraph' && !b.text) out.push(['err','Paragraph needs text.']);
+      if(b.type==='figure' && !b.image) out.push(['err','Figure needs an image path.']);
+      if(b.type==='link' && !b.to) out.push(['err','Link needs a target.']);
+      if(b.type==='callout' && /<[a-z]/i.test(b.text||'')) out.push(['warn','Callout text is plain — VTML tags will show literally inside the box.']);
+      if(b.type==='steps' && !(b.items||[]).length) out.push(['warn','Steps block is empty.']);
+      if(b.type==='materials' && !(b.items||[]).length) out.push(['warn','Materials block is empty.']);
+    });
+  });
+  return out;
+}
+
+/* --------------------------- preview (approximate) ----------------------- */
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function inlineVtml(s){
+  // Approximate the inline subset for preview only.
+  return esc(s)
+    .replace(/&lt;strong&gt;(.*?)&lt;\/strong&gt;/g,'<strong>$1</strong>')
+    .replace(/&lt;i&gt;(.*?)&lt;\/i&gt;/g,'<em>$1</em>')
+    .replace(/&lt;a href="(.*?)"&gt;(.*?)&lt;\/a&gt;/g,'<a class="xref" href="#" onclick="return false">$2</a>')
+    .replace(/&lt;itemstack code="(.*?)"\s*\/&gt;/g,'<span class="xref">[$1]</span>')
+    .replace(/&lt;icon name="(.*?)"\s*\/&gt;/g,'<span class="xref">[$1]</span>');
+}
+function lang(s){ return (s||'').startsWith('#') ? s.slice(1).split(':').pop().replace(/-/g,' ') : (s||''); }
+
+function preview(o){
+  const accent = /^#[0-9a-fA-F]{6}$/.test(o.accentColor||'') ? o.accentColor : '#7a5a2e';
+  let h = '';
+  h += `<div class="runhead"><span class="r"></span>${esc(lang(o.title)||'The Almanac')}<span class="r"></span></div>`;
+  if(o.subtitle) h += `<div class="byline">${esc(lang(o.subtitle))}</div>`;
+  if(o.byline) h += `<div class="byline">${esc(lang(o.byline))}</div>`;
+
+  (o.sections||[]).forEach(s=>{
+    if(s.title) h += `<h4>${esc(lang(s.title))}</h4>`;
+    if(s.revealedBy){
+      h += `<div class="locked">${esc(lang(s.hint)||'This page waits for practiced hands.')}</div>`;
+      return;   // unrevealed sections hide their blocks
+    }
+    (s.blocks||[]).forEach(b=>{
+      switch(b.type){
+        case 'heading': h += `<h4>${esc(lang(b.text))}</h4>`; break;
+        case 'paragraph': {
+          let t = lang(b.text)||'';
+          let cap = '';
+          if(b.dropcap && t.length){ cap = `<span class="dropcap" style="color:${accent}">${esc(t[0])}</span>`; t = t.slice(1); }
+          h += `<p>${cap}${inlineVtml(t)}</p>`; break;
+        }
+        case 'dropcap': h += `<p><span class="dropcap" style="color:${accent}">${esc(b.letter||'')}</span></p>`; break;
+        case 'steps': {
+          const ordered = b.ordered !== false;
+          (b.items||[]).forEach((it,i)=>{
+            h += `<div class="step">${ordered
+              ? `<span class="num" style="background:${accent}">${i+1}</span>`
+              : `<span class="bullet">•</span>`}<span>${inlineVtml(lang(it))}</span></div>`;
+          });
+          break;
+        }
+        case 'materials': {
+          h += '<div class="mats">';
+          (b.items||[]).forEach(m=>{
+            h += `<div class="mat"><div class="slot">${esc((m.code||'').split(':').pop())}</div>${esc(m.label||'')}${m.count?' ×'+esc(m.count):''}</div>`;
+          });
+          h += '</div>'; break;
+        }
+        case 'recipe': h += `<div class="recipe">▦ grid recipe — ${esc(b.recipe||b.output||'(unset)')}</div>`; break;
+        case 'callout': {
+          const c = CALLOUT_COLORS[b.variant||'author'];
+          const seal = (b.variant||'author')==='author'
+            ? `<span class="seal" style="background:${c.line}">${esc((lang(o.byline)||'A').replace(/.*by /i,'').trim()[0]||'A')}</span>` : '';
+          const label = (b.variant||'author')==='author' ? `<span class="lbl">From the Author's Hand:</span><br>` : '';
+          h += `<div class="callout" style="background:${c.fill};border-color:${c.line}">${seal}${label}${esc(lang(b.text))}</div>`;
+          break;
+        }
+        case 'quest': (b.items||[]).forEach(q=>{
+            h += `<div class="quest${q.done?' done':''}">${q.done?'☑':'☐'} ${esc(lang(q.text))}</div>`; }); break;
+        case 'ledger': (b.entries||[]).forEach(e=>{ h += `<div class="ledger">${esc(lang(e))}</div>`; }); break;
+        case 'divider':
+          h += `<div class="divider"><span class="r" style="background:${accent};opacity:.5"></span><span class="d" style="color:${accent}">${esc(b.ornament||'❦')}</span><span class="r" style="background:${accent};opacity:.5"></span></div>`;
+          break;
+        case 'figure':
+          h += `<div class="figure">▣ ${esc(b.image||'(no image)')}<br><span style="font-size:10px">align: ${esc(b.align||'full')}</span></div>`;
+          if(b.caption) h += `<div class="cap">${esc(lang(b.caption))}</div>`;
+          break;
+        case 'link': h += `<p><a class="xref" href="#" onclick="return false">${esc(lang(b.text)||b.to)}</a></p>`; break;
+        case 'contents': h += `<div class="contents">— auto contents (${esc(b.include||'added')} mods) —</div>`; break;
+        case 'table': h += `<div class="recipe">table — deferred to v0.2, the engine skips this</div>`; break;
+      }
+    });
+  });
+  h += '<div class="pagenum">· 1 ·</div>';
+  return h;
+}
+
+/* ------------------------------ wiring ----------------------------------- */
+function refresh(){
+  const o = buildJson();
+  $('#json').textContent = JSON.stringify(o, null, 2);
+  $('#book').innerHTML = preview(o);
+
+  const domain = (o.id||'').includes(':') ? o.id.split(':')[0] : 'yourdomain';
+  const name = ((o.id||'').split(':').pop() || 'chapter').replace(/[^a-z0-9-_]/gi,'-').toLowerCase();
+  $('#filename').textContent = `assets/${domain}/almanac/guides/${name}.json`;
+
+  const issues = validate(o);
+  const ul = $('#issues'); ul.innerHTML='';
+  if(!issues.length){ const li=el('li','ok','Valid — ready to drop into your mod.'); ul.appendChild(li); }
+  else issues.forEach(([k,msg])=>{ ul.appendChild(el('li',k,msg)); });
+}
+
+$('#tab-preview').onclick = ()=>{ $('#tab-preview').classList.add('on'); $('#tab-json').classList.remove('on');
+  $('#pane-preview').hidden=false; $('#pane-json').hidden=true; };
+$('#tab-json').onclick = ()=>{ $('#tab-json').classList.add('on'); $('#tab-preview').classList.remove('on');
+  $('#pane-json').hidden=false; $('#pane-preview').hidden=true; };
+
+$('#btn-copy').onclick = async ()=>{
+  await navigator.clipboard.writeText(JSON.stringify(buildJson(), null, 2));
+  const b=$('#btn-copy'); const t=b.textContent; b.textContent='Copied'; setTimeout(()=>b.textContent=t,1200);
+};
+$('#btn-download').onclick = ()=>{
+  const o = buildJson();
+  const name = ((o.id||'').split(':').pop() || 'chapter').replace(/[^a-z0-9-_]/gi,'-').toLowerCase()+'.json';
+  const blob = new Blob([JSON.stringify(o,null,2)], {type:'application/json'});
+  const a = el('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  URL.revokeObjectURL(a.href);
+};
+/** Load a guide-pack object into the editor. Unknown fields are dropped on
+ *  purpose — what round-trips is what the schema defines. */
+function importDoc(o){
+  doc = {schemaVersion:1, id:o.id||'', gate:o.gate||'', title:o.title||'', subtitle:o.subtitle||'',
+         byline:o.byline||'', icon:o.icon||'', accentColor:o.accentColor||'',
+         order:o.order??null, overview:!!o.overview, pinned:!!o.pinned,
+         sections:(o.sections||[]).map(s=>({
+           id:s.id||'', title:s.title||'', keepTogether:!!s.keepTogether,
+           pageBreakBefore:!!s.pageBreakBefore, revealedBy:s.revealedBy||'', hint:s.hint||'',
+           blocks:(s.blocks||[]).map(b=>{
+             const nb = Object.assign(newBlock(b.type), b);
+             // Materials/quest counts arrive as numbers; the row inputs are text.
+             if(Array.isArray(nb.items)) nb.items = nb.items.map(it =>
+               (it && typeof it === 'object')
+                 ? Object.assign({}, it, it.count!=null ? {count:String(it.count)} : {})
+                 : it);
+             return nb;
+           })
+         }))};
+  if(!doc.sections.length) doc.sections=[newSection()];
+  render();
+}
+window.importDoc = importDoc;
+
+$('#btn-import').onclick = ()=>$('#file').click();
+$('#file').onchange = e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = ()=>{
+    try{ importDoc(JSON.parse(r.result)); }
+    catch(err){ alert('Could not read that JSON: '+err.message); }
+  };
+  r.readAsText(f); e.target.value='';
+};
+$('#btn-example').onclick = ()=>{
+  doc = {schemaVersion:1, id:'venah:fieldwright', gate:'fieldwright', title:'Fieldwright',
+    subtitle:"Being a practical guide to the surveyor's art", byline:'set down by Venah',
+    icon:'fieldwright:item/surveyors-rod', accentColor:'#7a5a2e', order:null, overview:false, pinned:false,
+    sections:[
+      {id:'opening', title:'', keepTogether:false, pageBreakBefore:false, revealedBy:'', hint:'', blocks:[
+        Object.assign(newBlock('paragraph'), {dropcap:true, text:'Every land remembers its measure. The surveyor\'s task is to listen: pace the bounds, sight the far ridge, and set in ink what holds true.'}),
+      ]},
+      {id:'getting-started', title:'Getting Started', keepTogether:true, pageBreakBefore:false, revealedBy:'', hint:'', blocks:[
+        Object.assign(newBlock('steps'), {ordered:true, items:[
+          'Fashion a Surveyor\'s Rod from sticks and knapped flint.',
+          'Drive a datum stake where two landmarks align.',
+          'Sight along the rod and set each bearing in your ledger.']}),
+        Object.assign(newBlock('materials'), {items:[
+          {code:'fieldwright:surveyors-rod', label:'Rod', count:''},
+          {code:'game:stick', label:'Stake', count:'2'}]}),
+        Object.assign(newBlock('callout'), {variant:'author',
+          text:'Check your rod against the sea-level mark cut into the harbor stone each spring. Frost heaves the ground. Trust the stone, not the soil.'}),
+      ]},
+      {id:'ledger', title:'Field Ledger', keepTogether:false, pageBreakBefore:false, revealedBy:'', hint:'', blocks:[
+        Object.assign(newBlock('ledger'), {entries:[
+          'Day 3. Bearing NNE from the river bend, 214 paces.',
+          'Day 4. Rim sighted. The gorge runs west, level and fair.']}),
+        Object.assign(newBlock('divider'), {}),
+        Object.assign(newBlock('link'), {to:'almanac://chapter/venah:smithing', text:'See the Smithing chapter for the rod\'s iron shoe.'}),
+      ]},
+    ]};
+  render();
+};
+
+render();
+</script>
+</body>
+</html>
