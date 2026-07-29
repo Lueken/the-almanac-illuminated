@@ -126,32 +126,32 @@
                  color:#5a4830;font-size:11px;letter-spacing:.34em;text-transform:uppercase;margin-bottom:4px}
   .book .runhead .r{flex:0 0 60px;height:1px;background:#a9906a}
   .book .byline{text-align:center;font-style:italic;color:#6b5a41;font-size:13px;margin:0 0 16px}
-  .book h4{margin:14px 0 5px;font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;font-weight:700}
-  .book p{margin:0 0 9px;font-size:12.5px;line-height:1.5}
-  .book .dropcap{float:left;font-size:37px;line-height:.86;padding:2px 7px 0 0;font-weight:700}
-  .book .step{display:flex;gap:9px;align-items:flex-start;margin:0 0 7px}
-  .book .num{flex:0 0 20px;height:20px;border-radius:50%;display:grid;place-items:center;
-             color:#f6efdd;font-size:12px;font-weight:700;margin-top:1px}
+  .book h4{margin:1.1em 0 .4em;font-size:.92em;letter-spacing:.14em;text-transform:uppercase;font-weight:700}
+  .book p{margin:0 0 .7em;font-size:1em;line-height:1.5}
+  .book .dropcap{float:left;font-size:2.96em;line-height:.86;padding:.05em .19em 0 0;font-weight:700}
+  .book .step{display:flex;gap:.6em;align-items:flex-start;margin:0 0 .45em;font-size:1em}
+  .book .num{flex:0 0 1.35em;height:1.35em;border-radius:50%;display:grid;place-items:center;
+             color:#f6efdd;font-size:.82em;font-weight:700;margin-top:.1em}
   .book .bullet{flex:0 0 20px;text-align:center}
   .book .mats{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 12px}
   .book .mat{width:60px;text-align:center;font-size:11px;color:#5c4c39}
   .book .mat .slot{width:44px;height:44px;margin:0 auto 3px;border:1px solid #b9a37c;
                    background:#f3ead2;border-radius:3px;display:grid;place-items:center;font-size:9px;color:#93815f;
                    overflow:hidden;word-break:break-all;padding:2px}
-  .book .callout{border:1.5px solid;border-radius:4px;padding:8px 10px;margin:10px 0;font-style:italic;font-size:12px}
+  .book .callout{border:1px solid;border-radius:3px;padding:.6em .8em;margin:.8em 0;font-style:italic;font-size:.96em}
   .book .callout .seal{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;
                        color:#fbf3df;font-style:normal;font-weight:700;font-size:12px;margin-right:8px;vertical-align:middle}
   .book .callout .lbl{font-weight:700;font-style:italic}
-  .book .quest{margin:0 0 4px;font-style:italic;font-size:12px}
+  .book .quest{margin:0 0 .3em;font-style:italic;font-size:.96em}
   .book .quest.done{color:#7b6b55;text-decoration:line-through}
-  .book .ledger{font-style:italic;font-size:12px;margin:0 0 4px;
+  .book .ledger{font-style:italic;font-size:.96em;margin:0 0 .3em;
                 border-bottom:1px solid rgba(120,95,60,.28);padding-bottom:3px}
   .book .divider{display:flex;align-items:center;gap:10px;margin:14px 0}
   .book .divider .r{flex:1;height:1px}
   .book .divider .d{font-size:11px}
   .book .figure{border:1px solid #b9a37c;background:#f3ead2;border-radius:3px;padding:26px;text-align:center;
                 color:#93815f;font-size:12px;margin:10px 0 4px;word-break:break-all}
-  .book .cap{text-align:center;font-style:italic;font-size:13px;color:#6b5a41;margin:0 0 12px}
+  .book .cap{text-align:center;font-style:italic;font-size:.9em;color:#6b5a41;margin:0 0 .8em}
   .book a.xref{color:#8a5a22;text-decoration:underline}
   .book .recipe{border:1px dashed #b9a37c;padding:10px;text-align:center;color:#7d6a4c;font-size:12.5px;margin:10px 0}
   .book .grid-recipe{display:flex;align-items:center;justify-content:center;gap:12px;margin:12px 0 2px}
@@ -168,12 +168,12 @@
   .book .fig-left{float:left;padding-right:12px}
   .book .fig-right{float:right;padding-left:12px}
   .book .fig-left img,.book .fig-right img{width:100%;display:block;border:1px solid #7c6a4d}
-  .book .locked{font-style:italic;color:#8a795f;font-size:12px}
-  .book .contents{color:#7b6b55;font-size:14px}
+  .book .locked{font-style:italic;color:#8a795f;font-size:.96em}
+  .book .contents{color:#7b6b55;font-size:.96em}
   .book .pagenum{text-align:center;color:#6b5a41;font-style:italic;font-size:13px;margin-top:20px}
   .book:after{content:'';display:block;clear:both}
   .spreadview{position:relative;overflow:hidden}
-  .pages{column-fill:auto;transition:transform .18s ease-out}
+  .pages{column-fill:auto;transition:transform .18s ease-out;font-size:12.5px}
   .pages > *{break-inside:auto}
   .pages .sec.keep{break-inside:avoid}
   .pages .sec.newpage{break-before:column}
@@ -209,6 +209,8 @@
     <div class="tabs">
       <button id="tab-preview" class="on">Preview</button>
       <button id="tab-json">JSON</button>
+      <span class="grow"></span>
+      <button id="btn-fit" title="Match the book's real line length. Small, but the page breaks land where the book puts them.">True size</button>
     </div>
     <div class="filename" id="filename"></div>
     <div class="status" id="status"></div>
@@ -442,9 +444,10 @@ function render(){
                      doc.sections.splice(si,1); if(!doc.sections.length) doc.sections.push(newSection()); render(); };
     tools.push(up,dn,rm);
 
+    const meta = n ? `${n} block${n===1?'':'s'} · ${fmtPages(pagesFor(sectionLines(sec)))}` : 'empty';
     c.appendChild(cardHead(sec,
       `${si+1}. ` + (t ? esc(t) : '<span class="untitled">Continuation</span>'),
-      n ? `${n} block${n===1?'':'s'}` : 'empty', tools));
+      meta, tools));
 
     const b = el('div','body');
     const sg = el('div','grid2');
@@ -632,6 +635,11 @@ function validate(o){
   (o.sections||[]).forEach((s,i)=>{
     const n = s.title ? `"${s.title}"` : `#${i+1}`;
     if(!s.blocks || !s.blocks.length) out.push(['warn',`Section ${n} has no blocks.`]);
+    const lines = sectionLines(s);
+    if(s.keepTogether && lines > PAGE_LINES)
+      out.push(['warn',`Section ${n} is ${fmtPages(pagesFor(lines))}, so "keep on one page" cannot hold. The book splits it rather than clipping it.`]);
+    if(!s.keepTogether && lines > PAGE_LINES*2.5)
+      out.push(['warn',`Section ${n} runs ${fmtPages(pagesFor(lines))}. Consider splitting it so a reader has somewhere to stop.`]);
     if(s.revealedBy && !s.revealedBy.includes(':')) out.push(['err',`Section ${n}: revealedBy must be namespace:key.`]);
     (s.blocks||[]).forEach(b=>{
       const L = (BLOCKS[b.type]||{}).label || b.type;
@@ -774,7 +782,7 @@ function preview(o){
    keepTogether maps to break-inside:avoid and pageBreakBefore to
    break-before:column, which is what the engine means by them. The real
    paginator is the game's; this is close enough to see where breaks land. */
-let spread = 0;
+let spread = 0, fitMode = false;
 const GUTTER = 34;
 
 function layoutSpread(){
@@ -784,6 +792,10 @@ function layoutSpread(){
   if(total < 80) return;
   const pageW = Math.floor((total - GUTTER) / 2);
   const pageH = Math.max(320, Math.round(pageW * 1.34));
+
+  // Read mode is comfortable; true size matches the book's 74 characters a
+  // line, which is where its breaks actually come from.
+  pages.style.fontSize = (fitMode ? Math.max(5, pageW / LINE_CHARS / 0.5) : 12.5) + 'px';
 
   view.style.height = pageH + 'px';
   pages.style.height = (pageH - 42) + 'px';
@@ -827,8 +839,94 @@ function layoutSpread(){
   const label = el('span','of', spreads === 1 ? `pages ${spread*2+1} and ${spread*2+2}`
                                               : `spread ${spread+1} of ${spreads}`);
   p.append(prev, label, next);
+
+  // What the book will actually make of it, counted rather than measured.
+  const est = estimatePages();
+  p.append(el('span','more', `the book makes this about ${est} page${est===1?'':'s'}`));
 }
 window.addEventListener('resize', ()=>layoutSpread());
+
+/* ---------------------------------------------------------------------------
+   Page budget. Derived from the book's own constants rather than from how this
+   preview happens to render: frame aspect 876/590, physical-mode text column
+   0.045..0.472 wide and 0.06..0.95 tall, body set at 16.5 with a 1.12 line
+   height. That works out to roughly 34 lines of 74 characters a page. Counting
+   characters against that is far more reliable than measuring CSS, and it does
+   not drift when the preview styling changes.
+--------------------------------------------------------------------------- */
+const PAGE_LINES = 34, LINE_CHARS = 74;
+
+const plain = t => String(t==null?'':t).replace(/<[^>]*>/g,'').trim();
+const wrapped = (t, width) => Math.max(1, Math.ceil(plain(t).length / width));
+
+/** Rough height of a block, in lines of body text. */
+function blockLines(b){
+  switch(b.type){
+    case 'heading':   return wrapped(lang(b.text), LINE_CHARS) + 1.2;   // air above
+    case 'paragraph': return wrapped(lang(b.text), LINE_CHARS) + 0.6;
+    case 'dropcap':   return 2;
+    case 'steps':     return (b.items||[]).reduce((n,i)=>n + wrapped(lang(i), LINE_CHARS-6) + 0.2, 0);
+    case 'materials': return (b.items||[]).length ? 3.2 : 0;            // icon row plus captions
+    case 'recipe':    return 5;                                          // the grid plus its air
+    case 'callout':   return wrapped(lang(b.text), LINE_CHARS-8) + 2.4;  // border, padding, margins
+    case 'quest':     return (b.items||[]).length * 1.1;
+    case 'ledger':    return (b.entries||[]).length * 1.1;
+    case 'divider':   return 1.2;
+    case 'link':      return wrapped(lang(b.text||b.to), LINE_CHARS) + 0.4;
+    case 'figure':    return (b.align||'full') === 'full' ? 10 : 5;
+    case 'contents':  return 14;      // the live mod list; length depends on the player
+    default:          return 0;       // table is skipped by the engine
+  }
+}
+
+function sectionLines(s){
+  if(s.revealedBy) return (s.title ? wrapped(lang(s.title), LINE_CHARS) + 1.2 : 0) + 1.6;
+  return (s.title ? wrapped(lang(s.title), LINE_CHARS) + 1.2 : 0)
+       + (s.blocks||[]).reduce((n,b)=>n + blockLines(b), 0) + 0.8;
+}
+
+const pagesFor = lines => lines / PAGE_LINES;
+function fmtPages(p){
+  if(p < 0.12) return 'a few lines';
+  if(p < 1) return `about ${Math.round(p*10)/10} of a page`;
+  return `about ${Math.round(p*10)/10} pages`;
+}
+
+/** Mirrors the engine's paginator (ChapterRenderer.Paginate): a section with
+ *  keepTogether is one indivisible atom, otherwise its title binds to the first
+ *  block and later blocks flow on their own. Atoms fill a page and break to the
+ *  next when they no longer fit; one taller than a page splits rather than
+ *  clipping. Heights are estimates, the packing is the real rule. */
+function estimatePages(){
+  const pages = [];
+  let cur = 0;
+  const flush = ()=>{ pages.push(cur); cur = 0; };
+
+  (doc.sections||[]).forEach(sec=>{
+    if(sec.pageBreakBefore && cur > 0) flush();
+
+    const titleLines = sec.title ? wrapped(lang(sec.title), LINE_CHARS) + 1.2 : 0;
+    let atoms;
+    if(sec.revealedBy){
+      atoms = [titleLines + 1.6];                       // title plus the hint line
+    } else if(sec.keepTogether){
+      atoms = [sectionLines(sec)];
+    } else {
+      const bl = (sec.blocks||[]).map(blockLines);
+      atoms = [titleLines + (bl.shift() || 0)];         // a title never orphans
+      bl.forEach(x=>atoms.push(x));
+    }
+    atoms[atoms.length-1] += 0.8;                       // the gap between sections
+
+    atoms.forEach(a=>{
+      if(cur > 0 && cur + a > PAGE_LINES) flush();
+      while(a > PAGE_LINES){ pages.push(PAGE_LINES); a -= PAGE_LINES; }
+      cur += a;
+    });
+  });
+  if(cur > 0) flush();
+  return Math.max(1, pages.length);
+}
 
 const SAVE_KEY = 'almanac-guide-editor/draft';
 let saveTimer = null;
@@ -931,6 +1029,13 @@ $('#file').onchange = e=>{
   };
   r.readAsText(f); e.target.value='';
 };
+$('#btn-fit').onclick = ()=>{
+  fitMode = !fitMode;
+  $('#btn-fit').classList.toggle('on', fitMode);
+  $('#btn-fit').textContent = fitMode ? 'Readable' : 'True size';
+  layoutSpread();
+};
+
 $('#btn-new').onclick = ()=>{
   if(!confirm('Start a new guide? The current one is replaced.')) return;
   doc = blankDoc(); render();
