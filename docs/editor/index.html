@@ -226,7 +226,7 @@ function readRecipeFile(text){
 
 let doc = blankDoc();
 function blankDoc(){
-  return {schemaVersion:1, id:'', gate:'', title:'', subtitle:'', byline:'', icon:'',
+  return {schemaVersion:1, $schema:'', id:'', gate:'', title:'', subtitle:'', byline:'', icon:'',
           accentColor:'', order:null, overview:false, pinned:false, sections:[newSection()]};
 }
 function newSection(){ return {id:'', title:'', keepTogether:false, pageBreakBefore:false, revealedBy:'', hint:'', blocks:[]}; }
@@ -329,6 +329,8 @@ function render(){
   g4.appendChild(checkbox('Overview (landing page — gate-less only)', doc.overview, v=>doc.overview=v));
   g4.appendChild(checkbox('Pinned (named tab above the letters)', doc.pinned, v=>doc.pinned=v));
   m.appendChild(g4);
+  m.appendChild(field('$schema (optional — gives editors autocomplete)', doc.$schema, v=>doc.$schema=v,
+    {placeholder:'https://…/guide-pack.schema.json'}));
   m.appendChild(el('div','hint','Any text field takes a literal or a #langkey (e.g. #yourmod:chapter-title).'));
   root.appendChild(m);
 
@@ -412,6 +414,14 @@ function blockCard(sec, b, bi){
       {type, options, placeholder: def||''}));
   });
 
+  // `requires` is common to every block type (SCHEMA.md §5): the block renders
+  // only when every listed mod is loaded.
+  c.appendChild(field('Requires — modids, comma separated (blank = always)',
+    (b.requires||[]).join(', '),
+    v=>{ const a = v.split(',').map(x=>x.trim()).filter(Boolean);
+         if(a.length) b.requires = a; else delete b.requires; },
+    {placeholder:'industrialstory, smithingplus'}));
+
   // Preview-only asset loaders. The game reads these from your mod at runtime;
   // the browser cannot, so point at the same file to see it here.
   if(b.type === 'figure') c.appendChild(assetLoader(b, 'image',
@@ -456,7 +466,10 @@ function assetLoader(block, kind, label, accept, read){
 
 /* ------------------------------ output ----------------------------------- */
 function buildJson(){
-  const o = {schemaVersion:1};
+  const o = {};
+  // Kept first when present: editors use it for autocomplete against the schema.
+  if(doc.$schema) o.$schema = doc.$schema;
+  o.schemaVersion = 1;
   const put=(k,v)=>{ if(v!==''&&v!=null&&v!==false) o[k]=v; };
   put('id',doc.id); put('gate',doc.gate); put('title',doc.title);
   put('subtitle',doc.subtitle); put('byline',doc.byline); put('icon',doc.icon);
@@ -474,6 +487,7 @@ function buildJson(){
     if(s.hint) x.hint=s.hint;
     x.blocks = s.blocks.map(b=>{
       const y={type:b.type};
+      if(Array.isArray(b.requires) && b.requires.length) y.requires = b.requires.slice();
       const spec=BLOCKS[b.type]; if(!spec) return y;
       spec.fields.forEach(([k,,t])=>{
         const v=b[k];
@@ -498,7 +512,10 @@ function validate(o){
   if(!o.title) out.push(['err','Chapter needs a title.']);
   if(o.accentColor && !/^#[0-9a-fA-F]{6}$/.test(o.accentColor)) out.push(['err','accentColor must look like #7a5a2e.']);
   if(o.overview && o.gate) out.push(['err','overview is for gate-less chapters only — clear the gate or the overview flag.']);
-  if(o.order!=null && o.gate) out.push(['warn','order is ignored on gated chapters (except inside the pinned band).']);
+  // order IS honoured on a gated chapter when it is pinned — the pinned band
+  // sorts by order, then id (SCHEMA.md §3). Only warn for the unpinned case.
+  if(o.order!=null && o.gate && !o.pinned)
+    out.push(['warn','order is ignored on gated chapters unless the chapter is pinned.']);
 
   (o.sections||[]).forEach((s,i)=>{
     const n = s.title ? `"${s.title}"` : `#${i+1}`;
@@ -678,7 +695,7 @@ $('#btn-download').onclick = ()=>{
 /** Load a guide-pack object into the editor. Unknown fields are dropped on
  *  purpose — what round-trips is what the schema defines. */
 function importDoc(o){
-  doc = {schemaVersion:1, id:o.id||'', gate:o.gate||'', title:o.title||'', subtitle:o.subtitle||'',
+  doc = {schemaVersion:1, $schema:o.$schema||'', id:o.id||'', gate:o.gate||'', title:o.title||'', subtitle:o.subtitle||'',
          byline:o.byline||'', icon:o.icon||'', accentColor:o.accentColor||'',
          order:o.order??null, overview:!!o.overview, pinned:!!o.pinned,
          sections:(o.sections||[]).map(s=>({
