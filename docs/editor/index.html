@@ -126,9 +126,9 @@
                  color:#5a4830;font-size:11px;letter-spacing:.34em;text-transform:uppercase;margin-bottom:4px}
   .book .runhead .r{flex:0 0 60px;height:1px;background:#a9906a}
   .book .byline{text-align:center;font-style:italic;color:#6b5a41;font-size:13px;margin:0 0 16px}
-  .book h4{margin:18px 0 6px;font-size:14px;letter-spacing:.14em;text-transform:uppercase;font-weight:700}
-  .book p{margin:0 0 10px;font-size:15.5px;line-height:1.5}
-  .book .dropcap{float:left;font-size:46px;line-height:.86;padding:2px 7px 0 0;font-weight:700}
+  .book h4{margin:14px 0 5px;font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;font-weight:700}
+  .book p{margin:0 0 9px;font-size:12.5px;line-height:1.5}
+  .book .dropcap{float:left;font-size:37px;line-height:.86;padding:2px 7px 0 0;font-weight:700}
   .book .step{display:flex;gap:9px;align-items:flex-start;margin:0 0 7px}
   .book .num{flex:0 0 20px;height:20px;border-radius:50%;display:grid;place-items:center;
              color:#f6efdd;font-size:12px;font-weight:700;margin-top:1px}
@@ -138,13 +138,13 @@
   .book .mat .slot{width:44px;height:44px;margin:0 auto 3px;border:1px solid #b9a37c;
                    background:#f3ead2;border-radius:3px;display:grid;place-items:center;font-size:9px;color:#93815f;
                    overflow:hidden;word-break:break-all;padding:2px}
-  .book .callout{border:1.5px solid;border-radius:4px;padding:10px 12px;margin:12px 0;font-style:italic;font-size:14.5px}
+  .book .callout{border:1.5px solid;border-radius:4px;padding:8px 10px;margin:10px 0;font-style:italic;font-size:12px}
   .book .callout .seal{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;
                        color:#fbf3df;font-style:normal;font-weight:700;font-size:12px;margin-right:8px;vertical-align:middle}
   .book .callout .lbl{font-weight:700;font-style:italic}
-  .book .quest{margin:0 0 5px;font-style:italic;font-size:14.5px}
+  .book .quest{margin:0 0 4px;font-style:italic;font-size:12px}
   .book .quest.done{color:#7b6b55;text-decoration:line-through}
-  .book .ledger{font-style:italic;font-size:14.5px;margin:0 0 4px;
+  .book .ledger{font-style:italic;font-size:12px;margin:0 0 4px;
                 border-bottom:1px solid rgba(120,95,60,.28);padding-bottom:3px}
   .book .divider{display:flex;align-items:center;gap:10px;margin:14px 0}
   .book .divider .r{flex:1;height:1px}
@@ -168,7 +168,7 @@
   .book .fig-left{float:left;padding-right:12px}
   .book .fig-right{float:right;padding-left:12px}
   .book .fig-left img,.book .fig-right img{width:100%;display:block;border:1px solid #7c6a4d}
-  .book .locked{font-style:italic;color:#8a795f;font-size:14.5px}
+  .book .locked{font-style:italic;color:#8a795f;font-size:12px}
   .book .contents{color:#7b6b55;font-size:14px}
   .book .pagenum{text-align:center;color:#6b5a41;font-style:italic;font-size:13px;margin-top:20px}
   .book:after{content:'';display:block;clear:both}
@@ -178,6 +178,11 @@
   .pages .sec.keep{break-inside:avoid}
   .pages .sec.newpage{break-before:column}
   .gutter{position:absolute;top:0;bottom:0;width:1px;background:rgba(90,70,45,.30);pointer-events:none}
+  .furniture{position:absolute;inset:0;pointer-events:none}
+  .furniture .rh{position:absolute;top:2px;text-align:center;color:#5a4830;font-size:8.5px;
+                 letter-spacing:.30em;text-transform:uppercase;display:flex;align-items:center;gap:7px;justify-content:center}
+  .furniture .rh i{flex:0 0 34px;height:1px;background:#a9906a;display:block}
+  .furniture .pn{position:absolute;bottom:2px;text-align:center;color:#6b5a41;font-style:italic;font-size:11px}
   .pager{display:flex;align-items:center;gap:10px;justify-content:center;margin-top:10px;color:var(--faint);font-size:12.5px}
   .pager button{padding:3px 11px}
   .pager .of{min-width:96px;text-align:center}
@@ -665,9 +670,6 @@ function lang(s){ return (s||'').startsWith('#') ? s.slice(1).split(':').pop().r
 function preview(o){
   const accent = /^#[0-9a-fA-F]{6}$/.test(o.accentColor||'') ? o.accentColor : '#7a5a2e';
   let h = '';
-  h += `<div class="runhead"><span class="r"></span>${esc(lang(o.title)||'The Almanac')}<span class="r"></span></div>`;
-  if(o.subtitle) h += `<div class="byline">${esc(lang(o.subtitle))}</div>`;
-  if(o.byline) h += `<div class="byline">${esc(lang(o.byline))}</div>`;
 
   (o.sections||[]).forEach(s=>{
     const secCls = 'sec' + (s.keepTogether?' keep':'') + (s.pageBreakBefore?' newpage':'');
@@ -784,13 +786,30 @@ function layoutSpread(){
   const pageH = Math.max(320, Math.round(pageW * 1.34));
 
   view.style.height = pageH + 'px';
-  pages.style.height = pageH + 'px';
+  pages.style.height = (pageH - 42) + 'px';
+  pages.style.paddingTop = '22px';
+  pages.style.paddingBottom = '20px';
   pages.style.width = (pageW * 2 + GUTTER) + 'px';
   pages.style.columnWidth = pageW + 'px';
   pages.style.columnGap = GUTTER + 'px';
   gutter.style.left = (pageW + GUTTER / 2) + 'px';
 
   // Column count comes from how far the content actually runs.
+  // Furniture rides over the flow on every page, the way the book draws it:
+  // running heads at the top, page numbers at the foot.
+  const chapter = (doc.title||'').trim() || 'The Almanac';
+  const f = $('#furniture');
+  f.innerHTML = '';
+  [0,1].forEach(side=>{
+    const x = side ? pageW + GUTTER : 0;
+    const rh = el('div','rh');
+    rh.innerHTML = '<i></i>' + esc(side ? chapter : 'The Almanac') + '<i></i>';
+    rh.style.left = x + 'px'; rh.style.width = pageW + 'px';
+    const pn = el('div','pn', '· ' + (spread*2 + side + 1) + ' ·');
+    pn.style.left = x + 'px'; pn.style.width = pageW + 'px';
+    f.append(rh, pn);
+  });
+
   const cols = Math.max(1, Math.round(pages.scrollWidth / (pageW + GUTTER)));
   const spreads = Math.max(1, Math.ceil(cols / 2));
   if(spread >= spreads) spread = spreads - 1;
@@ -821,7 +840,8 @@ function refresh(){
   // keys the preview-asset map (loaded images, parsed recipes).
   $('#book').innerHTML =
     '<div class="spreadview" id="spreadview"><div class="pages" id="pages">'
-    + preview(doc) + '</div><div class="gutter" id="gutter"></div></div>';
+    + preview(doc) + '</div><div class="furniture" id="furniture"></div>'
+    + '<div class="gutter" id="gutter"></div></div>';
   layoutSpread();
 
   const domain = (o.id||'').includes(':') ? o.id.split(':')[0] : 'yourdomain';
