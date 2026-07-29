@@ -289,6 +289,21 @@ A ready-to-edit overview template ships in the repository at `docs/examples/serv
 
 ---
 
+## Writing a guide without hand-editing JSON
+
+`docs/editor/index.html` is a self-contained web editor for this schema. Open it
+in any browser (no install, no build step) or host it as a static page. Fill in
+the chapter manifest, add sections and blocks from the menus, and it produces
+valid guide-pack JSON plus the asset path to save it at
+(`assets/<domain>/almanac/guides/<name>.json`).
+
+It shows an approximate book preview as you type, flags schema problems live,
+and imports an existing guide so you can edit one you already ship. The preview
+approximates the fonts and colours; the true preview is `.almpreview <folder>`
+in game, which hot-reloads the book as you save.
+
+---
+
 ## Validation
 
 A JSON Schema ships beside this document at `docs/guide-pack.schema.json`. It mirrors the rules above and gives you autocomplete and live error checking in any editor that reads JSON Schema.
