@@ -302,6 +302,13 @@ and imports an existing guide so you can edit one you already ship. The preview
 approximates the fonts and colours; the true preview is `.almpreview <folder>`
 in game, which hot-reloads the book as you save.
 
+**About recipes and figures.** Both render for real in game: a `recipe` block is
+drawn by the handbook's own grid component from the live recipe registry, and a
+`figure` is loaded from your mod's assets. A browser can reach neither, so the
+editor lets you point at the same files you ship — the PNG for a figure, the
+grid-recipe `.json` for a recipe — and previews them locally. Those picks are
+preview-only and never appear in the exported JSON.
+
 ---
 
 ## Validation
