@@ -51,7 +51,6 @@
   .check input{width:15px;height:15px}
   .hint{font-size:12px;color:#8d8474;margin-top:3px}
 
-  .section{border-left:3px solid #6b5326}
   .block{background:#2a2621;border:1px solid #3f3830;border-radius:6px;padding:10px 11px;margin:0 0 9px}
   .block .rowhead h3{font-size:13px;color:#c8bda6}
   .btype{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8e836f}
@@ -279,7 +278,7 @@ function render(){
 
   /* --- sections --- */
   doc.sections.forEach((sec,si)=>{
-    const c = el('div','card section');
+    const c = el('div','card');
     const head = el('div','rowhead');
     head.appendChild(el('h3',null,`Section ${si+1}`));
     head.appendChild(el('span','grow'));
