@@ -14,14 +14,90 @@ namespace AlmanacIlluminated;
 
 /// <summary>
 /// The open book. A two-page parchment spread of one chapter at a time, with
-/// page turning, chapter-to-chapter navigation through internal links, a Home
-/// button to the landing page, and a jump to the contents/overview. The book
-/// opens to the overview when one exists. Frame art and the page-flip animation
-/// arrive in later phases.
+/// page turning, chapter-to-chapter navigation through internal links, and a
+/// jump to the contents/overview via the ribbon tabs. The book opens to the
+/// overview when one exists. Frame art and the page-flip animation arrive in
+/// later phases.
 /// </summary>
 public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
 {
     public const string HotkeyCode = "almanacilluminatedbook";
+
+    /// <summary>
+    /// Physical-mode bridge. When set and Active, the flat screen
+    /// draw is suppressed — PhysicalBookView captures this dialog into an
+    /// offscreen framebuffer instead — and real mouse events are remapped
+    /// through the tilted page back into the flat space the composers were
+    /// laid out in. Keyboard input needs no remap and flows through untouched.
+    /// </summary>
+    public IPhysicalMirror? PhysicalMirror;
+
+    private bool InPhysicalMode => PhysicalMirror?.Active == true;
+
+    /// <summary>Physical mode layers the book with the dialog stack, above chat and other huds.</summary>
+    public override double DrawOrder => InPhysicalMode ? 0.89 : base.DrawOrder;
+
+    public override void OnRenderGUI(float deltaTime)
+    {
+        if (InPhysicalMode)
+        {
+            // The flat draw is replaced by the captured tilted page, drawn here
+            // so it inherits this dialog's position in the render order.
+            PhysicalMirror!.DrawLive(deltaTime);
+            return;
+        }
+        base.OnRenderGUI(deltaTime);
+    }
+
+    /// <summary>Renders the composers for the physical view's capture pass, bypassing the suppression above.</summary>
+    public void RenderForCapture(float deltaTime) => base.OnRenderGUI(deltaTime);
+
+    public override void OnMouseDown(MouseEvent args)
+    {
+        if (InPhysicalMode)
+        {
+            if (PhysicalMirror!.TryRemap(args.X, args.Y, out int rx, out int ry))
+            {
+                base.OnMouseDown(new MouseEvent(rx, ry, args.Button, args.Modifiers));
+            }
+            else if (!TryScrapClick(args.X, args.Y))   // pinned scraps hang above the page rect
+            {
+                TrySideTabClick(args.X, args.Y);       // modeled tabs protrude past the side edges
+            }
+            args.Handled = true;   // the book owns the mouse while open, on or off the page
+            return;
+        }
+        base.OnMouseDown(args);
+    }
+
+    public override void OnMouseUp(MouseEvent args)
+    {
+        if (InPhysicalMode)
+        {
+            // Clamped remap regardless of on-page: a drag released off the
+            // page must still end at the nearest page point, or the pressed
+            // element stays stuck.
+            PhysicalMirror!.TryRemap(args.X, args.Y, out int rx, out int ry);
+            base.OnMouseUp(new MouseEvent(rx, ry, args.Button, args.Modifiers));
+            args.Handled = true;
+            return;
+        }
+        base.OnMouseUp(args);
+    }
+
+    public override void OnMouseMove(MouseEvent args)
+    {
+        if (InPhysicalMode)
+        {
+            if (PhysicalMirror!.TryRemap(args.X, args.Y, out int rx, out int ry))
+            {
+                base.OnMouseMove(new MouseEvent(rx, ry, args.DeltaX, args.DeltaY));
+            }
+            args.Handled = true;
+            return;
+        }
+        base.OnMouseMove(args);
+    }
 
     // Fraction of the screen the open book fills.
     private const double ScreenFraction = 0.84;
@@ -77,6 +153,7 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     private float lastFrameW, lastFrameH;
     private float lastGuiScale;
     private double boardLeftPx, boardWpx, bookHpx;   // book-region paint extent, for DrawFrame
+    private string physChapterTitle = "The Almanac";  // for the physical header band
     private ImageSurface? frameSurface;              // the book art, loaded once per open
     private int soundCounter;                        // rotates the three page-turn sounds
     private int leftPageNum = -1, rightPageNum = -1;  // codex footer numbers, -1 hides one
@@ -341,19 +418,6 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         ComposeSpread();
     }
 
-    /// <summary>Return to the front of the book: the landing page, first spread.</summary>
-    private bool OnHome()
-    {
-        var target = library.Default;
-        if (target == null) return true;
-        if (current == target && !journalMode && !cropsMode && !weatherMode && externalTab == null)
-        {
-            if (spreadIndex != 0) { spreadIndex = 0; PlayPageTurnSound(); ComposeSpread(); }
-        }
-        else { cropsMode = false; weatherMode = false; externalTab = null; OpenChapter(target); }
-        return true;
-    }
-
     private void OnContents()
     {
         var target = library.ContentsPage ?? library.Default;
@@ -373,6 +437,187 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         spreadIndex = 0;
         PlayPageTurnSound();
         ComposeSpread();
+    }
+
+    // --- Bookmarks --------------------------------------------------------
+    // Player state: the top-edge scraps on the physical book ARE the pins
+    // (ruled 2026-07-28: scraps only render for actually-bookmarked pages).
+    // Pinned via the +/− paper tag at the book's top-right; clicking a scrap
+    // jumps to its pin. Capped at the four modeled scrap slots.
+
+    public class BookmarkPin
+    {
+        public string ChapterId = "";
+        public int Spread;
+        public string Label = "";
+    }
+
+    private List<BookmarkPin> pins = new();
+    private bool pinsLoaded;
+    private static string BookmarksPath => System.IO.Path.Combine(GamePaths.DataPath, "ModData", "almanacilluminated", "bookmarks.json");
+    public static int MaxPins => PhysicalBookView.ScrapSlots;
+
+    public int PinCount { get { EnsurePinsLoaded(); return pins.Count; } }
+
+    /// <summary>The pin whose page is open right now, or -1 — its scrap lies
+    /// ON the spread; all others read as tucked under it.</summary>
+    public int FocusedPinIndex => CurrentPinIndex();
+
+    // --- Physical side tabs -----------------------------------------------
+    // Published by ComposeSpread in physical mode; the view draws them as
+    // modeled slips, and clicks route back through TrySideTabClick.
+    public string[] PhysLeftTabs = Array.Empty<string>();
+    public string[] PhysRightTabs = Array.Empty<string>();
+    public int PhysLeftActive = -1, PhysRightActive = -1;
+
+    /// <summary>How many of each strip's trailing tabs hang from the foot of the page
+    /// rather than following on from the top. See GuiElementChapterTabs for the flat
+    /// side of the same contract.</summary>
+    public int PhysLeftBottom, PhysRightBottom;
+    private List<Action> physLeftActions = new(), physRightActions = new();
+
+    private bool TrySideTabClick(int x, int y)
+    {
+        if (PhysicalMirror?.TryRemapRaw(x, y, out float a, out float b) != true) return false;
+        bool leftSide = a < 0;
+        float absA = Math.Abs(a);
+        if (absA < PhysicalBookView.SideTabAInner || absA > PhysicalBookView.SideTabAOuter) return false;
+
+        int row = (int)Math.Round((PhysicalBookView.SideTabRow0 - b) / PhysicalBookView.SideTabRowStep);
+        float rowB = PhysicalBookView.SideTabRow0 - row * PhysicalBookView.SideTabRowStep;
+        if (Math.Abs(b - rowB) > PhysicalBookView.SideTabHalfB) return false;
+
+        // A row slot is not an array position once a group hangs from the foot, so ask
+        // the renderer's own mapping rather than reimplementing it here.
+        var actions = leftSide ? physLeftActions : physRightActions;
+        int bottom = leftSide ? PhysLeftBottom : PhysRightBottom;
+        int index = PhysicalBookView.SideTabIndexForRow(row, actions.Count, bottom);
+        if (index < 0 || index >= actions.Count) return false;
+        actions[index]();
+        return true;
+    }
+
+    /// <summary>The scrap label for pin i. Pins from before labels existed
+    /// resolve their chapter title lazily and keep it.</summary>
+    public string PinLabel(int i)
+    {
+        EnsurePinsLoaded();
+        if (i < 0 || i >= pins.Count) return "";
+        var pin = pins[i];
+        if (string.IsNullOrEmpty(pin.Label))
+        {
+            var pack = library.ById(pin.ChapterId);
+            pin.Label = pack != null ? (library.Title(pack) ?? pin.ChapterId) : pin.ChapterId;
+            if (pin.Spread > 0) pin.Label += $" · {pin.Spread + 1}";
+        }
+        return pin.Label;
+    }
+
+    /// <summary>Bookmarks first shipped under the physical-book fork's own modid. The fork
+    /// is gone (merged here), so carry its pins over once rather than orphan them.</summary>
+    private static string LegacyBookmarksPath => System.IO.Path.Combine(GamePaths.DataPath, "ModData", "almanacphysical", "bookmarks.json");
+
+    private void EnsurePinsLoaded()
+    {
+        if (pinsLoaded) return;
+        pinsLoaded = true;
+        try
+        {
+            if (!File.Exists(BookmarksPath) && File.Exists(LegacyBookmarksPath))
+            {
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(BookmarksPath)!);
+                File.Copy(LegacyBookmarksPath, BookmarksPath);
+                IlluminatedLogger.Info(capi, "bookmarks", "Carried bookmarks over from the physical-book fork.");
+            }
+            if (File.Exists(BookmarksPath))
+            {
+                var list = JsonConvert.DeserializeObject<List<BookmarkPin>>(File.ReadAllText(BookmarksPath));
+                if (list != null) pins = list.Take(MaxPins).ToList();
+            }
+        }
+        catch (Exception e) { IlluminatedLogger.Warn(capi, "bookmarks", $"Could not load bookmarks: {e.Message}"); }
+    }
+
+    private void SavePins()
+    {
+        try
+        {
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(BookmarksPath)!);
+            File.WriteAllText(BookmarksPath, JsonConvert.SerializeObject(pins));
+        }
+        catch (Exception e) { IlluminatedLogger.Warn(capi, "bookmarks", $"Could not save bookmarks: {e.Message}"); }
+    }
+
+    private bool CurrentPinnable =>
+        current?.Id != null && !journalMode && !cropsMode && !weatherMode && externalTab == null;
+
+    private int CurrentPinIndex()
+    {
+        EnsurePinsLoaded();
+        if (!CurrentPinnable) return -1;
+        return pins.FindIndex(p => p.ChapterId == current!.Id && p.Spread == spreadIndex);
+    }
+
+    private void TogglePinCurrent()
+    {
+        EnsurePinsLoaded();
+        if (!CurrentPinnable) return;
+
+        int i = CurrentPinIndex();
+        if (i >= 0)
+        {
+            pins.RemoveAt(i);
+            capi.ShowChatMessage("Bookmark removed.");
+        }
+        else if (pins.Count >= MaxPins)
+        {
+            capi.ShowChatMessage($"The Almanac holds {MaxPins} bookmarks. Remove one first.");
+            return;
+        }
+        else
+        {
+            string label = library.Title(current!) ?? current!.Id!;
+            if (spreadIndex > 0) label += $" · {spreadIndex + 1}";
+            pins.Add(new BookmarkPin { ChapterId = current!.Id!, Spread = spreadIndex, Label = label });
+            capi.ShowChatMessage("Bookmarked.");
+        }
+        SavePins();
+        ComposeSpread();   // flips the tag glyph; scrap visibility reads PinCount live
+    }
+
+    /// <summary>Jump to pin i (a scrap was clicked).</summary>
+    private void OpenPin(int i)
+    {
+        EnsurePinsLoaded();
+        if (i < 0 || i >= pins.Count) return;
+        var pin = pins[i];
+        var target = library.ById(pin.ChapterId);
+        if (target == null)
+        {
+            capi.ShowChatMessage("That bookmark's chapter is no longer in the library.");
+            return;
+        }
+        OpenChapter(target, silent: true);
+        spreadIndex = Math.Max(0, pin.Spread);
+        PlayPageTurnSound();
+        ComposeSpread();
+    }
+
+    /// <summary>Scrap click zones share the renderer's slot layout constants —
+    /// the scraps hang above the page rect (page-space b 1.0..~1.28).</summary>
+    private bool TryScrapClick(int x, int y)
+    {
+        if (PhysicalMirror?.TryRemapRaw(x, y, out float a, out float b) != true) return false;
+        if (b < 0.97f || b > 1.32f) return false;
+        for (int i = 0; i < PhysicalBookView.ScrapSlots && i < PinCount; i++)
+        {
+            if (Math.Abs(a - PhysicalBookView.ScrapSlotCenter[i]) <= PhysicalBookView.ScrapSlotHalfWidth)
+            {
+                OpenPin(i);
+                return true;
+            }
+        }
+        return false;
     }
 
     private void EnsureJournalLoaded()
@@ -453,7 +698,10 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         // roomy screen the ribbons get their full margin; on a tight one they give
         // way first, down to their floor, and then the book itself shrinks.
         const double screenPad = 8;
-        double tabMargin = hasTabs
+        // Physical mode: the ribbons are modeled geometry outside the page, so
+        // the drawn margins they used to occupy would just be blank paper —
+        // the book region takes nearly the whole dialog instead.
+        double tabMargin = InPhysicalMode ? 12 : hasTabs
             ? Math.Min(TabMarginMax, Math.Max(TabMarginMin, (screenW - screenPad - bookW) / 2))
             : 0;
         if (bookW + 2 * tabMargin > screenW - screenPad)
@@ -465,12 +713,20 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         double dialogW = tabMargin + bookW + tabMargin;
         double dialogH = bookH + btnRow;
 
-        // Page text columns, mapped onto the frame art as fractions of the book.
-        double colLeftX = bookX + FxLeftL * bookW;
-        double colRightX = bookX + FxRightL * bookW;
-        double colW = (FxLeftR - FxLeftL) * bookW;
-        double colTopY = FxContentTop * bookH;
-        double colH = (FxContentBottom - FxContentTop) * bookH;
+        // Page text columns. The Fx fractions were tuned to the painted frame
+        // art; physical mode has no frame, so its margins tighten to book
+        // margins: room for the running-head band up top, page numbers below,
+        // and a modest gutter/edge inset.
+        double fxTop = InPhysicalMode ? 0.06 : FxContentTop;
+        double fxBottom = InPhysicalMode ? 0.95 : FxContentBottom;
+        double fxLL = InPhysicalMode ? 0.045 : FxLeftL;
+        double fxLR = InPhysicalMode ? 0.472 : FxLeftR;
+        double fxRL = InPhysicalMode ? 0.528 : FxRightL;
+        double colLeftX = bookX + fxLL * bookW;
+        double colRightX = bookX + fxRL * bookW;
+        double colW = (fxLR - fxLL) * bookW;
+        double colTopY = fxTop * bookH;
+        double colH = (fxBottom - fxTop) * bookH;
         double contentW = colW;
         double contentH = colH;
 
@@ -609,7 +865,6 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         double btnY = bookH + 4;
         int slot = 0;
         ElementBounds Slot() => ElementBounds.Fixed(colLeftX + slot++ * (btnW + btnGap), btnY, btnW, 28);
-        ElementBounds homeBtn = Slot();
         ElementBounds? saveBtn = journalMode ? Slot() : null;
         ElementBounds? addBtn = journalMode ? Slot() : null;
 
@@ -621,7 +876,14 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         ElementBounds? leftTabs = hasTabs ? ElementBounds.Fixed(0, colTopY, tabMargin, colH) : null;
         ElementBounds? rightTabs = hasTabs ? ElementBounds.Fixed(bookX + bookW, colTopY, tabMargin - 6, colH) : null;
 
-        var children = new List<ElementBounds> { titleTextBounds, homeBtn, cornerBounds };
+        // The bookmark tag hangs from the top edge at the book's top-right,
+        // clear of the title. Physical mode only, and only on pages that can
+        // hold a bookmark (regular chapters).
+        ElementBounds? bookmarkTag = InPhysicalMode && CurrentPinnable
+            ? ElementBounds.Fixed(bookX + bookW - 58, 2, 34, 26)
+            : null;
+
+        var children = new List<ElementBounds> { titleTextBounds, cornerBounds };
         if (journalMode) children.Add(journalText);
         else if (cropsMode || (externalTab != null && ExternalColsPerSpread() == 4)) children.AddRange(cropsCols);
         else { children.Add(leftText); children.Add(rightText); }
@@ -629,11 +891,13 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         if (addBtn != null) children.Add(addBtn);
         if (leftTabs != null) children.Add(leftTabs);
         if (rightTabs != null) children.Add(rightTabs);
+        if (bookmarkTag != null) children.Add(bookmarkTag);
         bgBounds.WithChildren(children.ToArray());
 
         string title = weatherMode ? "Weather" : cropsMode ? "Crops" : journalMode ? "Journal"
             : externalTab != null ? externalTab.Label
             : (current != null ? library.Title(current) : "The Almanac");
+        physChapterTitle = title;   // the physical header band draws it (running heads)
 
         var titleFont = CairoFont.WhiteSmallishText()
             .WithFont(FontRegistry.SerifDecorative)
@@ -643,7 +907,9 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         var composer = capi.Gui
             .CreateCompo("illuminatedbook", dialogBounds)
             .AddStaticCustomDraw(bgBounds, DrawFrame)
-            .AddStaticText(title, titleFont, titleTextBounds);
+            // Physical mode draws its own running heads in the band; the flat
+            // book keeps the single centered title.
+            .AddStaticText(InPhysicalMode ? "" : title, titleFont, titleTextBounds);
 
         if (journalMode)
         {
@@ -684,27 +950,46 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
                 composer.AddRichtext(pages[rightIdx], rightText, "rightpage");
         }
 
-        composer.AddSmallButton("⌂ Home", OnHome, homeBtn);
         if (journalMode)
         {
             composer.AddSmallButton("Save", OnJournalSave, saveBtn);
             composer.AddSmallButton("+ Page", OnJournalAddPage, addBtn);
         }
 
+        if (bookmarkTag != null)
+        {
+            composer.AddInteractiveElement(
+                new GuiElementBookmarkTag(capi, bookmarkTag, CurrentPinIndex() >= 0, TogglePinCurrent), "bookmarktag");
+        }
+
         if (hasTabs)
         {
             BuildTabStrips(out var lLabels, out var lActions, out var lActive,
-                           out var rLabels, out var rActions, out var rActive);
-            composer.AddInteractiveElement(
-                new GuiElementChapterTabs(capi, leftTabs!, lLabels, lActive, i => lActions[i](), BookTabSide.Left), "lefttabs");
-            composer.AddInteractiveElement(
-                new GuiElementChapterTabs(capi, rightTabs!, rLabels, rActive, i => rActions[i](), BookTabSide.Right), "righttabs");
+                           out var rLabels, out var rActions, out var rActive, out int lBottom);
+            if (InPhysicalMode)
+            {
+                // Physical mode: the tabs are modeled paper slips on the page
+                // edges, drawn and hit-tested by the view — publish the strip
+                // data instead of composing the drawn ribbons.
+                PhysLeftTabs = lLabels; PhysRightTabs = rLabels;
+                PhysLeftActive = lActive; PhysRightActive = rActive;
+                PhysLeftBottom = lBottom; PhysRightBottom = 0;
+                physLeftActions = lActions; physRightActions = rActions;
+            }
+            else
+            {
+                composer.AddInteractiveElement(
+                    new GuiElementChapterTabs(capi, leftTabs!, lLabels, lActive, i => lActions[i](), BookTabSide.Left, lBottom), "lefttabs");
+                composer.AddInteractiveElement(
+                    new GuiElementChapterTabs(capi, rightTabs!, rLabels, rActive, i => rActions[i](), BookTabSide.Right), "righttabs");
+            }
         }
 
         // Added last so it sits atop the pages: link clicks resolve first, then the
         // corners. It only acts in the bottom-outer corners; elsewhere clicks pass through.
         corners = new GuiElementPageCorners(capi, cornerBounds, OnTurnComplete, PlayPageTurnSound,
-            forward => forward ? CanGoNext() : CanGoPrev());
+            forward => forward ? CanGoNext() : CanGoPrev(),
+            InPhysicalMode ? fwd => PhysicalMirror!.BeginPageTurn(fwd) : null);
         composer.AddInteractiveElement(corners, "pagecorners");
 
         SingleComposer = composer.Compose();
@@ -771,7 +1056,8 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     /// the split, the way a thumb-index moves as you read deeper into the book.
     /// </summary>
     private void BuildTabStrips(out string[] leftLabels, out List<Action> leftActions, out int leftActive,
-                                out string[] rightLabels, out List<Action> rightActions, out int rightActive)
+                                out string[] rightLabels, out List<Action> rightActions, out int rightActive,
+                                out int leftBottom)
     {
         var ordered = library.Ordered;
         var pinned = library.PinnedChapters;
@@ -779,9 +1065,10 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         var firstByLetter = new Dictionary<char, int>();
         for (int i = 0; i < ordered.Count; i++)
         {
-            // The pinned band gets named tabs of its own; letting it claim letters
-            // would make the thumb-index jump to curated chapters instead of the run.
-            if (pinned.Contains(ordered[i])) continue;
+            // The pinned band and the overview all get named tabs of their own; letting
+            // them claim letters would make the thumb-index jump to curated chapters
+            // instead of the run. The overview is the book's front door, not an entry.
+            if (pinned.Contains(ordered[i]) || ordered[i] == library.Overview) continue;
             char l = LetterOf(library.Title(ordered[i]));
             if (!firstByLetter.ContainsKey(l)) { firstByLetter[l] = i; letters.Add(l); }
         }
@@ -791,19 +1078,31 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         // Journal, Crops) have no letter, and neither does the pinned band, so on
         // those the whole alphabet sits on the right.
         bool curIsPinned = current != null && pinned.Contains(current);
+        bool curIsOverview = current != null && current == library.Overview;
         char cur = (!journalMode && !cropsMode && !weatherMode && externalTab == null
-                && current != null && !curIsPinned && library.OrderIndex(current) >= 0)
+                && current != null && !curIsPinned && !curIsOverview && library.OrderIndex(current) >= 0)
             ? LetterOf(library.Title(current)) : '\0';
 
-        var lLabels = new List<string> { "Contents", "Journal", "Crops", "Weather" };
-        leftActions = new List<Action> { OnContents, OnJournal, OnCrops, OnWeather };
+        // The left edge reads top to bottom as broad to particular. The overview is the
+        // front door and sits alone at the head; the reading tabs follow; the book's own
+        // tools hang from the foot, held apart so the two groups never read as one list.
+        var lLabels = new List<string>();
+        leftActions = new List<Action>();
+        int leftHit = -1;
+
+        var overview = library.Overview;
+        if (overview != null)
+        {
+            GuidePack front = overview;
+            if (curIsOverview) leftHit = lLabels.Count;
+            lLabels.Add(library.TabTitle(front));
+            leftActions.Add(() => OpenChapter(front));
+        }
 
         // The mod-tab band: computed tabs and ribbon-tab chapters, one ordering.
-        var modTabs = BuildModTabs();
-        int modActive = -1;
-        foreach (ModTabEntry mt in modTabs)
+        foreach (ModTabEntry mt in BuildModTabs())
         {
-            if (mt.IsActive()) modActive = lLabels.Count;
+            if (mt.IsActive()) leftHit = lLabels.Count;
             lLabels.Add(mt.Label);
             leftActions.Add(mt.Activate);
         }
@@ -814,9 +1113,19 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
             lLabels.Add(l.ToString());
             leftActions.Add(() => OpenChapter(ordered[idx]));
         }
+
+        // The foot group: the reader's own tools, not the pack's chapters.
+        string[] toolLabels = { "Journal", "Crops", "Weather", "Index" };
+        var toolActions = new Action[] { OnJournal, OnCrops, OnWeather, OnContents };
+        int toolActive = weatherMode ? 2 : cropsMode ? 1 : journalMode ? 0
+            : (current != null && current == library.ContentsPage) ? 3 : -1;
+        if (toolActive >= 0) leftHit = lLabels.Count + toolActive;
+        lLabels.AddRange(toolLabels);
+        leftActions.AddRange(toolActions);
+
         leftLabels = lLabels.ToArray();
-        leftActive = modActive >= 0 ? modActive
-            : weatherMode ? 3 : cropsMode ? 2 : journalMode ? 1 : (current == library.ContentsPage ? 0 : -1);
+        leftBottom = toolLabels.Length;
+        leftActive = leftHit;
 
         // The pinned band heads the right strip as named tabs, always visible
         // regardless of how deep into the alphabet the reader is.
@@ -827,7 +1136,7 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         {
             if (curIsPinned && p == current) pinnedActive = rLabels.Count;
             var chapter = p;
-            rLabels.Add(library.Title(p));
+            rLabels.Add(library.TabTitle(p));
             rightActions.Add(() => OpenChapter(chapter));
         }
         foreach (char l in letters)
@@ -859,6 +1168,18 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     /// </summary>
     private void DrawFrame(Context ctx, ImageSurface surface, ElementBounds b)
     {
+        // Physical mode: the 3D model IS the book — covers, page edges, spine.
+        // The painted frame art would layer the old drawn book over the modeled
+        // one; instead compose the page faces themselves: warm parchment with a
+        // center-gutter shadow, the cue that makes two bound pages out of what
+        // otherwise reads as one long sheet. Compose-time check is safe: the
+        // dialog always recomposes on open, physical mode is set before TryOpen.
+        if (InPhysicalMode)
+        {
+            DrawPhysicalPages(ctx, b);
+            return;
+        }
+
         frameSurface ??= TryLoadFrame();
         double dx = b.drawX + boardLeftPx, dy = b.drawY, dw = boardWpx, dh = bookHpx;
 
@@ -920,6 +1241,164 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         var cueFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithFontSize(20f).WithColor(new[] { 0.28, 0.18, 0.10, 0.28 });
         if (CanGoPrev()) Glyph(cueFont, "‹", FxLeftL + 0.01, numY);
         if (CanGoNext()) Glyph(cueFont, "›", FxRightR - 0.01, numY);
+    }
+
+    /// <summary>
+    /// The physical-mode page background, in the game's own pixel language:
+    /// a coarse quantized-noise parchment blitted with nearest-neighbor
+    /// scaling (chunky texels, like the model's leather), a center-fold
+    /// shadow built from hard-edged stepped bands, a crease, and stepped
+    /// edge shading. No smooth gradients — smooth reads as "drawn", and the
+    /// book should read as textured. Composed once per spread.
+    /// </summary>
+    private void DrawPhysicalPages(Context ctx, ElementBounds b)
+    {
+        double dx = b.drawX, dy = b.drawY, dw = b.InnerWidth, dh = b.InnerHeight;
+        double cx = dx + dw / 2;
+
+        // Parchment texels: ~2 noise pixels per model voxel (the spread is
+        // 30x16 voxels), scaled up with Filter.Nearest for hard pixel edges.
+        const int nw = 64, nh = 40;
+        using (var noise = new ImageSurface(Format.Argb32, nw, nh))
+        {
+            using (var nctx = new Context(noise))
+            {
+                for (int py = 0; py < nh; py++)
+                {
+                    // Stepped (not smooth) vertical warmth shift.
+                    double warm = 0.02 * (py * 4 / nh) / 3.0;
+                    for (int px = 0; px < nw; px++)
+                    {
+                        uint h = (uint)(px * 73856093 ^ py * 19349663) * 0x85EBCA6Bu;
+                        h ^= h >> 16;
+                        double v = 0.013 * (h % 4);   // 4 discrete shades, VS-palette style
+                        nctx.SetSourceRGB(0.928 - v - warm * 0.5, 0.888 - v - warm, 0.778 - v - warm * 1.7);
+                        nctx.Rectangle(px, py, 1, 1);
+                        nctx.Fill();
+                    }
+                }
+            }
+            var pattern = new SurfacePattern(noise) { Filter = Filter.Nearest };
+            var m = new Matrix();
+            m.Scale(nw / dw, nh / dh);
+            m.Translate(-dx, -dy);
+            pattern.Matrix = m;
+            ctx.Save();
+            ctx.SetSource(pattern);
+            ctx.Rectangle(dx, dy, dw, dh);
+            ctx.Fill();
+            ctx.Restore();
+            pattern.Dispose();
+        }
+
+        // Center gutter: nested hard-edged bands darkening toward the fold.
+        double gw = dw * 0.055;
+        const int bands = 6;
+        for (int i = 0; i < bands; i++)
+        {
+            double w = gw * (bands - i) / bands;
+            ctx.SetSourceRGBA(0.25, 0.18, 0.10, 0.055);
+            ctx.Rectangle(cx - w, dy, w * 2, dh);
+            ctx.Fill();
+        }
+
+        // Crease at the fold: one hard line.
+        ctx.SetSourceRGBA(0.2, 0.13, 0.07, 0.3);
+        ctx.Rectangle(cx - GuiElement.scaled(1), dy, GuiElement.scaled(2), dh);
+        ctx.Fill();
+
+        // Outer page edges: two stepped shadow bands each side.
+        double ew = dw * 0.012;
+        foreach (double edgeX in new[] { dx, dx + dw - ew })
+        {
+            bool leftEdge = edgeX == dx;
+            ctx.SetSourceRGBA(0.25, 0.18, 0.10, 0.10);
+            ctx.Rectangle(leftEdge ? edgeX : edgeX, dy, ew, dh);
+            ctx.Fill();
+            ctx.SetSourceRGBA(0.25, 0.18, 0.10, 0.08);
+            ctx.Rectangle(leftEdge ? edgeX : edgeX + ew * 0.4, dy, ew * 0.6, dh);
+            ctx.Fill();
+        }
+
+        DrawPageFurniture(ctx, b);
+    }
+
+    /// <summary>
+    /// The mockup's page furniture: small-caps running heads over each page
+    /// ("THE ALMANAC" left, the open chapter right) flanked by thin rules with
+    /// circle ornaments, and ·page numbers· at the foot of each page.
+    /// </summary>
+    private void DrawPageFurniture(Context ctx, ElementBounds b)
+    {
+        double bookL = b.drawX + boardLeftPx, bookW = boardWpx;
+        double topY = b.drawY + GuiElement.scaled(20);
+        double footY = b.drawY + b.InnerHeight - GuiElement.scaled(12);
+        double[] muted = { 0.36, 0.27, 0.18, 0.85 };
+
+        var headFont = CairoFont.WhiteSmallText()
+            .WithFont(FontRegistry.SerifBody)
+            .WithFontSize(15f)
+            .WithWeight(Cairo.FontWeight.Bold)
+            .WithColor(new[] { muted[0], muted[1], muted[2], muted[3] });
+        var footFont = CairoFont.WhiteSmallText()
+            .WithFont(FontRegistry.SerifBody)
+            .WithFontSize(16f)
+            .WithSlant(Cairo.FontSlant.Italic)
+            .WithColor(new[] { 0.24, 0.17, 0.10, 0.95 });
+
+        void Head(string text, double cx)
+        {
+            // Letterspacing by manual per-character advance — inserting U+2009
+            // rendered stray glyphs through the GDI font path (2026-07-28).
+            headFont.SetupContext(ctx);
+            double tracking = GuiElement.scaled(2.2);
+            double width = 0;
+            foreach (char c in text) width += ctx.TextExtents(c.ToString()).XAdvance + tracking;
+            width -= tracking;
+
+            double x = cx - width / 2;
+            var ext = ctx.TextExtents(text);
+            foreach (char c in text)
+            {
+                string s = c.ToString();
+                ctx.MoveTo(x, topY);
+                ctx.ShowText(s);
+                x += ctx.TextExtents(s).XAdvance + tracking;
+            }
+
+            // Thin rules out from the text, a small circle at each far end.
+            double gap = GuiElement.scaled(14);
+            double reach = Math.Min(GuiElement.scaled(85), bookW * 0.16);
+            double ry = topY - ext.Height / 2 + GuiElement.scaled(1);
+            ctx.LineWidth = GuiElement.scaled(1);
+            ctx.SetSourceRGBA(muted[0], muted[1], muted[2], 0.5);
+            foreach (int dir in new[] { -1, 1 })
+            {
+                double x0 = cx + dir * (width / 2 + gap);
+                double x1 = cx + dir * (width / 2 + gap + reach);
+                ctx.MoveTo(x0, ry);
+                ctx.LineTo(x1, ry);
+                ctx.Stroke();
+                ctx.NewPath();
+                ctx.Arc(x1 + dir * GuiElement.scaled(4), ry, GuiElement.scaled(2.4), 0, Math.PI * 2);
+                ctx.Stroke();
+            }
+        }
+
+        void Foot(string text, double cx)
+        {
+            footFont.SetupContext(ctx);
+            var ext = ctx.TextExtents(text);
+            ctx.MoveTo(cx - ext.Width / 2 - ext.XBearing, footY);
+            ctx.ShowText(text);
+        }
+
+        double leftCx = bookL + bookW * 0.25, rightCx = bookL + bookW * 0.75;
+        string rightHead = physChapterTitle == "The Almanac" ? "Illvminated" : physChapterTitle;
+        Head(ChapterRenderer.SmallCaps("The Almanac"), leftCx);
+        Head(ChapterRenderer.SmallCaps(rightHead), rightCx);
+        Foot($"· {spreadIndex * 2 + 1} ·", leftCx);
+        Foot($"· {spreadIndex * 2 + 2} ·", rightCx);
     }
 
     private ImageSurface? TryLoadFrame()
@@ -994,10 +1473,38 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
             capi.World.Player.Entity, null, true, 8);
     }
 
+    /// <summary>
+    /// The one gate every close passes through, so the book always stows before it
+    /// goes away. Guarding here rather than at each call site is deliberate: the
+    /// game closes this dialog itself, without asking us. GuiDialog.OnKeyDown calls
+    /// TryClose() directly when the toggle hotkey (Alt+J) is pressed on an open
+    /// dialog, and OnKeyCombinationToggle does the same through Toggle(). Neither
+    /// consults our hotkey handler, so patching only our own paths would leave the
+    /// most common one snapping the book shut with no animation.
+    ///
+    /// Refusing the close leaves args.Handled false in the base handler, which is
+    /// what lets our hotkey handler still see the press and treat a second Alt+J
+    /// mid-stow as "reopen".
+    /// </summary>
+    public override bool TryClose()
+    {
+        if (InPhysicalMode && !PhysicalMirror!.StowComplete)
+        {
+            PhysicalMirror.RequestClose();
+            return false;
+        }
+        return base.TryClose();
+    }
+
     public override void OnKeyDown(KeyEvent args)
     {
         base.OnKeyDown(args);
-        if (!args.Handled && args.KeyCode == (int)GlKeys.Escape) { TryClose(); args.Handled = true; }
+        if (!args.Handled && args.KeyCode == (int)GlKeys.Escape)
+        {
+            // TryClose above turns this into a stow when the book is physical.
+            TryClose();
+            args.Handled = true;
+        }
     }
 
     public override void OnGuiClosed()

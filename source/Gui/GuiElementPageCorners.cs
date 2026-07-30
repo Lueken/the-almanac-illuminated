@@ -19,6 +19,11 @@ public class GuiElementPageCorners : GuiElement
     private readonly Action onTurnStart;
     private readonly System.Func<bool, bool> canTurn;      // forward? -> is there a page that way
 
+    // Physical mode: the 3D sheet turn replaces the PNG flip art. The callback
+    // snapshots the old spread and arms the sheet; the spread then swaps
+    // immediately (the animation carries the transition). Null in flat mode.
+    private readonly System.Func<bool, bool>? physicalTurn;
+
     private readonly int[] flipRight = new int[5];
     private readonly int[] flipLeft = new int[5];
     private bool loaded;
@@ -36,11 +41,12 @@ public class GuiElementPageCorners : GuiElement
 
     public bool Busy => animating;
 
-    public GuiElementPageCorners(ICoreClientAPI capi, ElementBounds bounds, Action<bool> onTurnComplete, Action onTurnStart, System.Func<bool, bool> canTurn) : base(capi, bounds)
+    public GuiElementPageCorners(ICoreClientAPI capi, ElementBounds bounds, Action<bool> onTurnComplete, Action onTurnStart, System.Func<bool, bool> canTurn, System.Func<bool, bool>? physicalTurn = null) : base(capi, bounds)
     {
         this.onTurnComplete = onTurnComplete;
         this.onTurnStart = onTurnStart;
         this.canTurn = canTurn;
+        this.physicalTurn = physicalTurn;
     }
 
     public override void ComposeElements(Context ctxStatic, ImageSurface surfaceStatic)
@@ -63,6 +69,17 @@ public class GuiElementPageCorners : GuiElement
     public void StartTurn(bool forward)
     {
         if (animating) return;
+
+        if (physicalTurn != null)
+        {
+            // The 3D sheet carries the visual; snapshot first, then swap the
+            // spread immediately so the new page composes under the sheet.
+            physicalTurn(forward);
+            onTurnStart?.Invoke();
+            onTurnComplete(forward);
+            return;
+        }
+
         animating = true;
         animForward = forward;
         animElapsed = 0;

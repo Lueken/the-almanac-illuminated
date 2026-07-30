@@ -7,7 +7,7 @@ namespace AlmanacIlluminated;
 
 /// <summary>
 /// The Almanac: Illuminated — a living questbook for the modded world.
-/// Phase 0 renderer spike: native GUI book dialog with a heavy mock chapter.
+/// Native GUI book dialog, presented as a book held in the hands or as a flat page.
 /// Design of record: agentic-os projects/briefs/the-almanac-illuminated/.
 /// </summary>
 public class AlmanacIlluminatedModSystem : ModSystem
@@ -30,6 +30,20 @@ public class AlmanacIlluminatedModSystem : ModSystem
     // Book tabs registered by other mods (TCM's Callings first). Initialized
     // inline so registration is safe regardless of ModSystem start order.
     private readonly List<IAlmanacBookTab> bookTabs = new();
+
+    // The physical book: the default presentation. The flat dialog still composes
+    // every page (it is the layout engine); the view captures it to a framebuffer
+    // and draws it on a modeled, tilted book. Flat rendering stays reachable as a
+    // preference and as the automatic fallback when the capture cannot run.
+    private const string PresentationHotkeyCode = "almanacilluminatedpresentation";
+    private PhysicalBookView? physicalView;
+    private bool physicalPreferred = true;
+    private static string SettingsPath => System.IO.Path.Combine(
+        Vintagestory.API.Config.GamePaths.DataPath, "ModData", "almanacilluminated", "settings.json");
+
+    /// <summary>The presentation the next open will use: physical unless the player turned it
+    /// off, or the capture proved unavailable on this machine.</summary>
+    private bool UsePhysical => physicalPreferred && physicalView != null && !physicalView.CaptureUnavailable;
 
     // Author preview (dev-only): read guides live from a folder or packed zip, hot-reload on edit.
     private PreviewSource.Location? previewLoc;
@@ -202,6 +216,23 @@ public class AlmanacIlluminatedModSystem : ModSystem
             GlKeys.J, HotkeyType.GUIOrOtherControls, altPressed: true);
         api.Input.SetHotKeyHandler(GuiDialogIlluminatedBook.HotkeyCode, OnToggleBook);
 
+        // The physical view is created before the commands below: a throw during
+        // command registration must never take the book's presentation with it
+        // (that exact failure shipped once during development).
+        LoadSettings();
+        physicalView = new PhysicalBookView(api);
+        physicalView.OnCaptureUnavailable = OnCaptureUnavailable;
+        api.Event.RegisterRenderer(physicalView, EnumRenderStage.Ortho, "almanacilluminated-bookview");
+
+        api.Input.RegisterHotKey(PresentationHotkeyCode, "Switch the Almanac between the physical book and the flat page",
+            GlKeys.P, HotkeyType.GUIOrOtherControls, altPressed: true);
+        api.Input.SetHotKeyHandler(PresentationHotkeyCode, _ => { TogglePresentation(); return true; });
+
+        api.ChatCommands.Create("almbook")
+            .WithDescription("Almanac presentation. No args: report. Args: physical | flat, or a physical-book knob (tilt|yaw|dist|scale|fov|height <n>, model <0|1>, reset)")
+            .WithArgs(api.ChatCommands.Parsers.OptionalAll("arg"))
+            .HandleWith(OnBookCommand);
+
         // Deep links into the book, clickable from anywhere richtext links render
         // (chat, a server-info panel, another mod's guide). A link like
         // <a href="almanac://chapter/almanactcm:trades">the Trades</a> opens the
@@ -227,7 +258,8 @@ public class AlmanacIlluminatedModSystem : ModSystem
             .WithArgs(api.ChatCommands.Parsers.OptionalAll("arg"))
             .HandleWith(OnPreviewCommand);
 
-        IlluminatedLogger.Info(api, "startup", "Illuminated Phase 0 spike loaded — Alt+J opens the book");
+        IlluminatedLogger.Info(api, "startup",
+            $"Illuminated loaded. Alt+J opens the book ({(physicalPreferred ? "physical" : "flat")}), Alt+P switches presentation");
     }
 
     private TextCommandResult OnWeatherCommand(TextCommandCallingArgs args)
@@ -311,6 +343,214 @@ public class AlmanacIlluminatedModSystem : ModSystem
         return lo;
     }
 
+    // --- The book, and how it is presented --------------------------------
+
+    /// <summary>
+    /// The vanilla seraph pose the "Opened large book" clutter item plays when
+    /// held (ClutterTypeProps.HeldIdleAnim path) — the character visibly holds
+    /// an open book. Triggering it directly while the Almanac is open gives a
+    /// third-person reading pose for free (Lamp's find, 2026-07-28).
+    /// </summary>
+    private const string ReadingAnimCode = "holdbothhands";
+
+    /// <summary>
+    /// Creates the book dialog if needed. Every construction site comes through
+    /// here — a dialog built anywhere else would miss the physical mirror and
+    /// silently open flat.
+    /// </summary>
+    private void EnsureDialog()
+    {
+        if (bookDialog != null || capi == null) return;
+        library ??= new GuideLibrary(capi, guidePacks);
+        AttachRevealProbe();
+        bookDialog = new GuiDialogIlluminatedBook(capi, library, () => homebasePos, EnsureHomebase, bookTabs);
+        bookDialog.PhysicalMirror = physicalView;
+        bookDialog.OnOpened += () => capi?.World.Player.Entity.AnimManager.StartAnimation(ReadingAnimCode);
+        bookDialog.OnClosed += () =>
+        {
+            physicalView?.HideLive();
+            capi?.World.Player.Entity.AnimManager.StopAnimation(ReadingAnimCode);
+        };
+    }
+
+    /// <summary>
+    /// Opens the book in the current presentation. Physical mode arms the view
+    /// before TryOpen so not even the first frame draws flat; flat mode just
+    /// opens the dialog, which is the same dialog either way.
+    /// </summary>
+    private void OpenBook()
+    {
+        EnsureDialog();
+        if (bookDialog == null) return;
+        if (UsePhysical) physicalView!.ShowLive(bookDialog);
+        bookDialog.TryOpen();
+    }
+
+    /// <summary>
+    /// Closes the book. Physical mode stows it with the reverse draw-out and the
+    /// view closes the dialog when the animation lands; flat mode shuts at once.
+    /// Both go through the dialog's TryClose guard, which makes this idempotent:
+    /// one Alt+J can reach both the game's own close and this handler, and asking
+    /// twice must not read as "cancel the stow".
+    /// </summary>
+    private void CloseBook() => bookDialog?.TryClose();
+
+    /// <summary>
+    /// Choose the presentation and remember it. An open book is reopened in the
+    /// new one, since the page layout differs. Returns the line to report, or
+    /// null when the machine cannot draw the physical book at all.
+    /// </summary>
+    private string? SetPresentation(bool physical)
+    {
+        if (capi == null) return null;
+        if (physical && physicalView?.CaptureUnavailable == true)
+            return "The physical Almanac is not available on this machine (see the client log). Reading flat.";
+
+        if (physical == physicalPreferred)
+            return physical ? "Already reading as a book." : "Already reading flat.";
+
+        physicalPreferred = physical;
+        SaveSettings();
+
+        if (bookDialog?.IsOpened() == true)
+        {
+            physicalView?.HideLive();
+            bookDialog.TryClose();
+            OpenBook();
+        }
+        return physicalPreferred
+            ? "The Almanac opens as a book in your hands."
+            : "The Almanac opens as a flat page.";
+    }
+
+    /// <summary>Alt+P: flip between the physical book and the flat page.</summary>
+    private void TogglePresentation()
+    {
+        string? line = SetPresentation(!physicalPreferred);
+        if (line != null) capi?.ShowChatMessage(line);
+    }
+
+    /// <summary>
+    /// The capture pipeline failed (no framebuffer, no shader, a driver that
+    /// refuses the offscreen pass). The flat dialog is the whole book minus its
+    /// presentation, so fall back to it rather than showing nothing: stow the
+    /// view, remember the failure for the session, and reopen flat.
+    /// </summary>
+    private void OnCaptureUnavailable(string reason)
+    {
+        if (capi == null) return;
+        IlluminatedLogger.Warn(capi, "physical",
+            $"Physical book unavailable ({reason}); falling back to the flat page for this session.");
+
+        bool wasOpen = bookDialog?.IsOpened() == true;
+        physicalView?.HideLive();
+
+        // This arrives mid-render, with the gui loop iterating the dialog list.
+        // Closing and reopening the book from inside that loop is exactly what
+        // the stow path avoids, so hand the swap to the next tick.
+        capi.Event.RegisterCallback(_ =>
+        {
+            if (wasOpen && bookDialog != null)
+            {
+                bookDialog.TryClose();
+                OpenBook();   // UsePhysical is false now, so this opens flat
+            }
+            capi.ShowChatMessage("The physical Almanac could not be drawn on this machine. Reading flat instead.");
+        }, 0);
+    }
+
+    private void LoadSettings()
+    {
+        try
+        {
+            if (!System.IO.File.Exists(SettingsPath)) return;
+            var cfg = Newtonsoft.Json.JsonConvert.DeserializeObject<BookSettings>(System.IO.File.ReadAllText(SettingsPath));
+            if (cfg != null) physicalPreferred = cfg.Physical;
+        }
+        catch (Exception e)
+        {
+            IlluminatedLogger.Warn(capi!, "settings", $"Could not read book settings: {e.Message}");
+        }
+    }
+
+    private void SaveSettings()
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SettingsPath)!);
+            System.IO.File.WriteAllText(SettingsPath,
+                Newtonsoft.Json.JsonConvert.SerializeObject(new BookSettings { Physical = physicalPreferred }));
+        }
+        catch (Exception e)
+        {
+            IlluminatedLogger.Warn(capi!, "settings", $"Could not save book settings: {e.Message}");
+        }
+    }
+
+    private class BookSettings
+    {
+        public bool Physical = true;
+    }
+
+    /// <summary>
+    /// .almbook — report or set the presentation, and tune the physical book's
+    /// framing live. Every knob applies on the next frame; finding the
+    /// readability envelope should never cost a restart.
+    /// </summary>
+    private TextCommandResult OnBookCommand(TextCommandCallingArgs args)
+    {
+        if (capi == null || physicalView == null) return TextCommandResult.Error("Client API unavailable");
+
+        string[] parts = ((args[0] as string)?.Trim() ?? "")
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (parts.Length == 0)
+        {
+            string state = physicalView.CaptureUnavailable
+                ? "flat (the physical book is unavailable on this machine)"
+                : physicalPreferred ? "physical" : "flat";
+            return TextCommandResult.Success($"The Almanac reads {state}. {physicalView.Describe()}");
+        }
+
+        string verb = parts[0].ToLowerInvariant();
+        switch (verb)
+        {
+            case "physical":
+            case "flat":
+                return TextCommandResult.Success(SetPresentation(verb == "physical") ?? "Client API unavailable");
+            case "status":
+                return TextCommandResult.Success(physicalView.Describe());
+            case "reset":
+                physicalView.Reset();
+                return TextCommandResult.Success($"Reset. {physicalView.Describe()}");
+        }
+
+        if (parts.Length < 2 || !float.TryParse(parts[1],
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v))
+        {
+            return TextCommandResult.Error(
+                "Usage: .almbook | .almbook physical|flat | .almbook tilt|yaw|dist|scale|fov|height <n> | .almbook model <0|1> | .almbook reset");
+        }
+
+        switch (verb)
+        {
+            case "tilt": physicalView.TiltDeg = v; break;
+            case "yaw": physicalView.YawDeg = v; break;
+            case "dist": physicalView.Dist = Math.Max(0.1f, v); break;
+            case "scale": physicalView.Scale = Math.Max(0.05f, v); break;
+            case "fov": physicalView.FovDeg = GameMath.Clamp(v, 10f, 120f); break;
+            case "height": physicalView.HeightOff = v; break;
+            case "model": physicalView.ModelEnabled = v != 0; break;
+            case "quad": physicalView.QuadEnabled = v != 0; break;
+            default:
+                return TextCommandResult.Error(
+                    $"Unknown knob '{verb}'. physical, flat, tilt, yaw, dist, scale, fov, height, model, quad, reset, status.");
+        }
+
+        IlluminatedLogger.Info(capi, "physical", $"almbook: {physicalView.Describe()}");
+        return TextCommandResult.Success(physicalView.Describe());
+    }
+
     // --- Author preview ---------------------------------------------------
 
     private TextCommandResult OnPreviewCommand(TextCommandCallingArgs args)
@@ -369,8 +609,8 @@ public class AlmanacIlluminatedModSystem : ModSystem
         ReloadPreview(announce: false);
 
         // Open the book on the preview so the author sees it immediately.
-        bookDialog ??= new GuiDialogIlluminatedBook(capi, library!, () => homebasePos, EnsureHomebase, bookTabs);
-        if (!bookDialog.IsOpened()) bookDialog.TryOpen();
+        EnsureDialog();
+        if (bookDialog?.IsOpened() == false) OpenBook();
 
         IlluminatedLogger.Info(capi, "preview", $"Preview on — watching {loc.Describe()}");
         return TextCommandResult.Success(
@@ -473,10 +713,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
         int hash = rest.IndexOf('#');
         string id = hash >= 0 ? rest.Substring(0, hash) : rest;   // section anchors land on page 1 for now
 
-        library ??= new GuideLibrary(capi, guidePacks);
-        AttachRevealProbe();
-        bookDialog ??= new GuiDialogIlluminatedBook(capi, library, () => homebasePos, EnsureHomebase, bookTabs);
-        if (!bookDialog.IsOpened()) bookDialog.TryOpen();
+        EnsureDialog();
+        if (bookDialog == null) return;
+        if (!bookDialog.IsOpened()) OpenBook();
         bookDialog.OpenToChapter(id);
     }
 
@@ -486,12 +725,11 @@ public class AlmanacIlluminatedModSystem : ModSystem
 
         // The whole visible library, ordered: the book opens to the overview (or
         // first front matter) and navigates between chapters via internal links.
-        library ??= new GuideLibrary(capi, guidePacks);
-        AttachRevealProbe();
-        bookDialog ??= new GuiDialogIlluminatedBook(capi, library, () => homebasePos, EnsureHomebase, bookTabs);
+        EnsureDialog();
+        if (bookDialog == null) return false;
 
-        if (bookDialog.IsOpened()) bookDialog.TryClose();
-        else bookDialog.TryOpen();
+        if (bookDialog.IsOpened()) CloseBook();
+        else OpenBook();
 
         return true;
     }
@@ -499,6 +737,8 @@ public class AlmanacIlluminatedModSystem : ModSystem
     public override void Dispose()
     {
         StopPreviewWatcher();
+        physicalView?.Dispose();
+        physicalView = null;
         bookDialog?.Dispose();
         bookDialog = null;
         base.Dispose();

@@ -1,6 +1,7 @@
 using System;
 using Cairo;
 using Vintagestory.API.Client;
+using Vintagestory.API.MathTools;
 
 namespace AlmanacIlluminated;
 
@@ -12,6 +13,12 @@ public enum BookTabSide { Left, Right }
 /// ribbons mirror that on the left. Each ribbon bears a short label; the active
 /// one reads brighter and reaches a touch further out.
 ///
+/// The last <c>bottomCount</c> tabs hang from the FOOT of the strip instead of
+/// following on from the top group. That is what separates the book's own tools
+/// (Journal, Crops, Weather, Index) from the reading tabs above them. Capacity is
+/// this element's own business: the physical renderer anchors the same group to
+/// the same edge using its own metrics, so neither needs a shared row count.
+///
 /// Drawn and hit-tested here directly. The native vertical tabs draw right-facing
 /// tabs on one side of their bounds but test clicks on the other, so they cannot
 /// be clicked. This avoids that.
@@ -19,6 +26,7 @@ public enum BookTabSide { Left, Right }
 public class GuiElementChapterTabs : GuiElement
 {
     private readonly string[] labels;
+    private readonly int bottomCount;
     private readonly int activeIndex;
     private readonly Action<int> onClick;
     private readonly BookTabSide side;
@@ -30,19 +38,36 @@ public class GuiElementChapterTabs : GuiElement
 
     private const double UnTabH = 27, UnGap = 5, UnPad = 11, UnRadius = 4, IdleShrink = 10;
 
-    private static readonly double[] FillActive = { 0.93, 0.88, 0.76, 1 };
-    private static readonly double[] FillIdle = { 0.74, 0.64, 0.48, 1 };
-    private static readonly double[] Border = { 0.17, 0.11, 0.07, 1 };
+    private static readonly double[] FillActive = { 0.95, 0.91, 0.80, 1 };
+    private static readonly double[] FillIdle = { 0.86, 0.80, 0.66, 1 };
+    private static readonly double[] Border = { 0.38, 0.29, 0.19, 0.85 };
 
-    public GuiElementChapterTabs(ICoreClientAPI capi, ElementBounds bounds, string[] labels, int activeIndex, Action<int> onClick, BookTabSide side = BookTabSide.Right) : base(capi, bounds)
+    // Per-tab paper character: small deterministic skew + tint jitter so the
+    // strip reads as tucked-in slips of paper, not a printed UI ribbon.
+    private static double Skew(int i) => ((i * 7 + 3) % 5 - 2) * 1.1;          // -2.2..+2.2 deg
+    private static double Tint(int i) => ((i * 5 + 1) % 4 - 1.5) * 0.014;      // subtle per-slip shade
+
+    public GuiElementChapterTabs(ICoreClientAPI capi, ElementBounds bounds, string[] labels, int activeIndex,
+        Action<int> onClick, BookTabSide side = BookTabSide.Right, int bottomCount = 0) : base(capi, bounds)
     {
         this.labels = labels;
+        this.bottomCount = GameMath.Clamp(bottomCount, 0, labels.Length);
         this.activeIndex = activeIndex;
         this.onClick = onClick;
         this.side = side;
         fontActive = CairoFont.WhiteSmallText().WithFontSize(15).WithColor(new[] { 0.13, 0.09, 0.05, 1.0 });
         fontIdle = CairoFont.WhiteSmallText().WithFontSize(15).WithColor(new[] { 0.20, 0.14, 0.08, 1.0 });
         texture = new LoadedTexture(capi);
+    }
+
+    /// <summary>Top of tab i. The top group runs down from 0; the bottom group runs up
+    /// from the foot, so it stays pinned however many tabs sit above it.</summary>
+    private double RowY(int i)
+    {
+        int topCount = labels.Length - bottomCount;
+        if (i < topCount) return i * (tabH + gap);
+        int fromBottom = labels.Length - 1 - i;
+        return Bounds.InnerHeight - tabH - fromBottom * (tabH + gap);
     }
 
     public override void ComposeElements(Context ctxStatic, ImageSurface surfaceStatic)
@@ -56,21 +81,41 @@ public class GuiElementChapterTabs : GuiElement
         ctx.SetSourceRGBA(0, 0, 0, 0);
         ctx.Paint();
 
-        double y = 0;
         for (int i = 0; i < labels.Length; i++)
         {
+            double y = RowY(i);
             bool active = i == activeIndex;
             double w = active ? fullW : fullW - scaled(IdleShrink);
             // Right ribbons grow from the left (book) edge; left ribbons grow from the right (book) edge.
             double x0 = side == BookTabSide.Right ? 0 : Bounds.InnerWidth - w;
 
+            // Each slip skews slightly about its attachment edge (the book side),
+            // like paper tucked between pages.
+            double pivotX = side == BookTabSide.Right ? x0 : x0 + w;
+            ctx.Save();
+            ctx.Translate(pivotX, y + tabH / 2);
+            ctx.Rotate(Skew(i) * Math.PI / 180.0);
+            ctx.Translate(-pivotX, -(y + tabH / 2));
+
             TabPath(ctx, side, x0, y, w, tabH, rad);
             var fill = active ? FillActive : FillIdle;
-            ctx.SetSourceRGBA(fill[0], fill[1], fill[2], fill[3]);
+            double t = active ? 0 : Tint(i);
+            ctx.SetSourceRGBA(fill[0] + t, fill[1] + t, fill[2] + t, fill[3]);
             ctx.FillPreserve();
-            ctx.LineWidth = scaled(1.5);
+            ctx.LineWidth = scaled(1);
             ctx.SetSourceRGBA(Border[0], Border[1], Border[2], Border[3]);
             ctx.Stroke();
+
+            // A faint shadow along the attachment edge sells "emerging from the pages".
+            double sx = side == BookTabSide.Right ? x0 : x0 + w - scaled(5);
+            var tuck = new LinearGradient(sx, y, sx + scaled(5), y);
+            bool fromLeft = side == BookTabSide.Right;
+            tuck.AddColorStop(fromLeft ? 0.0 : 1.0, new Color(0.25, 0.18, 0.10, 0.30));
+            tuck.AddColorStop(fromLeft ? 1.0 : 0.0, new Color(0.25, 0.18, 0.10, 0.0));
+            ctx.SetSource(tuck);
+            ctx.Rectangle(sx, y, scaled(5), tabH);
+            ctx.Fill();
+            tuck.Dispose();
 
             var font = active ? fontActive : fontIdle;
             font.SetupContext(ctx);
@@ -78,7 +123,7 @@ public class GuiElementChapterTabs : GuiElement
             ctx.MoveTo(x0 + pad, y + (tabH + fe.Ascent - fe.Descent) / 2);
             ctx.ShowText(labels[i]);
 
-            y += tabH + gap;
+            ctx.Restore();
         }
 
         generateTexture(surface, ref texture);
@@ -94,19 +139,21 @@ public class GuiElementChapterTabs : GuiElement
 
     public override void OnMouseDownOnElement(ICoreClientAPI api, MouseEvent args)
     {
-        double mx = api.Input.MouseX - Bounds.absX;
-        double my = api.Input.MouseY - Bounds.absY;
+        // Event coords, never api.Input.MouseX: in physical mode events arrive
+        // remapped through the tilted page, and the raw cursor position points
+        // at the invisible flat layout instead.
+        double mx = args.X - Bounds.absX;
+        double my = args.Y - Bounds.absY;
         if (mx < 0 || mx > Bounds.InnerWidth) return;
-        double y = 0;
         for (int i = 0; i < labels.Length; i++)
         {
+            double y = RowY(i);
             if (my >= y && my <= y + tabH)
             {
                 onClick(i);
                 args.Handled = true;
                 return;
             }
-            y += tabH + gap;
         }
     }
 

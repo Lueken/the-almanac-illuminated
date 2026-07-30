@@ -2,7 +2,18 @@
 
 A living questbook for the modded world. Pull the Almanac from your back pocket with Alt+J. It holds chapters of guides written by mod authors and pack authors. A chapter appears only when the mod it documents is loaded. The book has bookmarks, search, page turns, and tracked objectives.
 
-Status: Phase 0, the renderer spike. The format is specified and under review. The book itself is early.
+Status: the book reads as a physical object by default. The format is specified and under review.
+
+## How it reads
+
+Alt+J opens the Almanac. By default it draws as a bound book held in front of you: a modeled cover and spine, tilted pages, paper slips for the chapter tabs, scraps hanging from the top edge for your bookmarks, and a sheet that turns when you page.
+
+The flat page is still there. It is the same book, the same chapters, the same layout code, drawn straight to the screen instead of onto a tilted page. It stays available two ways:
+
+- **By choice.** Alt+P switches presentation, or `.almbook flat` / `.almbook physical`. The choice is remembered per install in `ModData/almanacilluminated/settings.json`.
+- **By fallback.** The physical book captures the composed spread into an offscreen framebuffer. If a machine will not give us one, the Almanac says so once and reads flat for the rest of the session. Nothing is lost but the tilt.
+
+`.almbook` on its own reports the current presentation. `.almbook tilt|yaw|dist|scale|fov|height <n>` tunes the framing live, and `.almbook reset` puts it back.
 
 ## The guide-pack format
 
@@ -27,7 +38,8 @@ Open the book with Alt+J, turn pages, and grep `client-main.log` for `[almanac:i
 
 Workshop-standard Maltiez template harness.
 
-- `source/`. All C#. `AlmanacIlluminatedModSystem` handles the hotkey and lifecycle. `Gui/GuiDialogIlluminatedBook` is the two-page spread that recomposes per turn. `Gui/MockChapter` is deliberately heavy spike content, not the guide-pack format.
+- `source/`. All C#. `AlmanacIlluminatedModSystem` handles the hotkeys and lifecycle. `Gui/GuiDialogIlluminatedBook` is the two-page spread that recomposes per turn, and it is the layout engine for both presentations. `Gui/MockChapter` is deliberately heavy spike content, not the guide-pack format.
+- `source/Physical/PhysicalBookView.cs`. The physical presentation: it captures the dialog above into a framebuffer, draws it on the modeled book, and remaps mouse events from the tilted page back into the flat space the composers laid out. Because it captures the composed spread rather than reimplementing it, every tab (chapters, Crops, Weather, Journal) inherits the physical book for free.
 - `resources/assets/almanacilluminated/`. Assets, including the bundled fonts.
 - `docs/SCHEMA.md`. The guide-pack format.
 - `modinfo.json` is generated from the csproj. Edit the metadata there.
@@ -42,4 +54,4 @@ The book reads in Lora and Almendra, the serifs the game already ships. Josefin 
 
 ## Credits
 
-The open-book frame art, the page-flip frames, and the page-turn sounds (`textures/gui/bookframe.png`, `textures/gui/flip/`, `sounds/pageturn*.ogg`) are from **Wanderer's Sketchbook** by **JeanPierre**, used with the author's blanket permission for modders ("Feel free and most welcome to modify or to use any of the assets from the mod!", stated on the mod's page).
+The open-book frame art used by the flat page, the page-flip frames, and the page-turn sounds (`textures/gui/bookframe.png`, `textures/gui/flip/`, `sounds/pageturn*.ogg`) are from **Wanderer's Sketchbook** by **JeanPierre**, used with the author's blanket permission for modders ("Feel free and most welcome to modify or to use any of the assets from the mod!", stated on the mod's page).

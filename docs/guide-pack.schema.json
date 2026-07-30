@@ -4,10 +4,17 @@
   "title": "The Almanac: Illuminated guide pack",
   "description": "A chapter for The Almanac. See docs/SCHEMA.md, which is canonical; this schema follows it.",
   "type": "object",
-  "required": ["schemaVersion", "id", "title", "sections"],
+  "required": [
+    "schemaVersion",
+    "id",
+    "title",
+    "sections"
+  ],
   "additionalProperties": false,
   "properties": {
-    "$schema": { "type": "string" },
+    "$schema": {
+      "type": "string"
+    },
     "schemaVersion": {
       "type": "integer",
       "minimum": 1,
@@ -25,6 +32,10 @@
     "title": {
       "$ref": "#/$defs/localizableString",
       "description": "The chapter title. A literal or a #langkey."
+    },
+    "tabLabel": {
+      "type": "string",
+      "description": "Short label for this chapter's tab, when the title is the wrong words for a narrow slip. Falls back to title. Applies wherever the chapter becomes a tab: the overview slot, a ribbonTab, or the pinned band. Supports the '#langkey' convention."
     },
     "subtitle": {
       "$ref": "#/$defs/localizableString",
@@ -57,14 +68,32 @@
     "sections": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/section" },
+      "items": {
+        "$ref": "#/$defs/section"
+      },
       "description": "The ordered content. The engine flows sections across the spread."
     }
   },
   "allOf": [
     {
-      "if": { "required": ["overview"], "properties": { "overview": { "const": true } } },
-      "then": { "not": { "required": ["gate"] }, "description": "overview is gate-less only." }
+      "if": {
+        "required": [
+          "overview"
+        ],
+        "properties": {
+          "overview": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "gate"
+          ]
+        },
+        "description": "overview is gate-less only."
+      }
     }
   ],
   "$defs": {
@@ -78,7 +107,9 @@
     },
     "section": {
       "type": "object",
-      "required": ["blocks"],
+      "required": [
+        "blocks"
+      ],
       "additionalProperties": false,
       "properties": {
         "id": {
@@ -100,135 +131,352 @@
         "blocks": {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/block" }
+          "items": {
+            "$ref": "#/$defs/block"
+          }
         }
       }
     },
     "block": {
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
         "type": {
           "enum": [
-            "heading", "paragraph", "dropcap", "steps", "materials",
-            "recipe", "callout", "quest", "figure", "ledger", "divider", "link", "contents", "table"
+            "heading",
+            "paragraph",
+            "dropcap",
+            "steps",
+            "materials",
+            "recipe",
+            "callout",
+            "quest",
+            "figure",
+            "ledger",
+            "divider",
+            "link",
+            "contents",
+            "table"
           ]
         },
         "requires": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Per-block gating. The block renders only when every listed mod is loaded."
         },
-        "text": { "$ref": "#/$defs/localizableString" },
-        "level": { "type": "integer", "minimum": 1, "maximum": 3 },
-        "dropcap": { "type": "boolean" },
-        "letter": { "type": "string" },
-        "items": { "type": "array" },
-        "ordered": { "type": "boolean" },
-        "recipe": { "type": "string" },
-        "output": { "type": "string" },
-        "variant": { "enum": ["author", "tip", "warning", "lore"] },
-        "icon": { "type": "string" },
-        "questId": { "type": "string" },
-        "image": { "type": "string" },
-        "caption": { "$ref": "#/$defs/localizableString" },
-        "align": { "enum": ["left", "right", "full"] },
+        "text": {
+          "$ref": "#/$defs/localizableString"
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "dropcap": {
+          "type": "boolean"
+        },
+        "letter": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array"
+        },
+        "ordered": {
+          "type": "boolean"
+        },
+        "recipe": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
+        },
+        "variant": {
+          "enum": [
+            "author",
+            "tip",
+            "warning",
+            "lore"
+          ]
+        },
+        "icon": {
+          "type": "string"
+        },
+        "questId": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "caption": {
+          "$ref": "#/$defs/localizableString"
+        },
+        "align": {
+          "enum": [
+            "left",
+            "right",
+            "full"
+          ]
+        },
         "entries": {
           "type": "array",
-          "items": { "$ref": "#/$defs/localizableString" }
+          "items": {
+            "$ref": "#/$defs/localizableString"
+          }
         },
-        "ornament": { "type": "string" },
-        "to": { "type": "string" },
+        "ornament": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
         "include": {
-          "enum": ["added", "all"],
+          "enum": [
+            "added",
+            "all"
+          ],
           "description": "contents block only. Which mods to list: 'added' (default) hides the base game; 'all' lists every loaded mod."
         }
       },
       "allOf": [
         {
-          "if": { "properties": { "type": { "const": "heading" } } },
-          "then": { "required": ["text"] }
-        },
-        {
-          "if": { "properties": { "type": { "const": "paragraph" } } },
-          "then": { "required": ["text"] }
-        },
-        {
-          "if": { "properties": { "type": { "const": "dropcap" } } },
-          "then": { "required": ["letter"] }
-        },
-        {
-          "if": { "properties": { "type": { "const": "steps" } } },
-          "then": {
-            "required": ["items"],
+          "if": {
             "properties": {
-              "items": { "type": "array", "items": { "$ref": "#/$defs/localizableString" } }
+              "type": {
+                "const": "heading"
+              }
             }
-          }
-        },
-        {
-          "if": { "properties": { "type": { "const": "materials" } } },
+          },
           "then": {
-            "required": ["items"],
-            "properties": {
-              "items": { "type": "array", "items": { "$ref": "#/$defs/materialItem" } }
-            }
-          }
-        },
-        {
-          "if": { "properties": { "type": { "const": "recipe" } } },
-          "then": {
-            "oneOf": [
-              { "required": ["recipe"], "not": { "required": ["output"] } },
-              { "required": ["output"], "not": { "required": ["recipe"] } }
+            "required": [
+              "text"
             ]
           }
         },
         {
-          "if": { "properties": { "type": { "const": "callout" } } },
-          "then": { "required": ["variant", "text"] }
+          "if": {
+            "properties": {
+              "type": {
+                "const": "paragraph"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "text"
+            ]
+          }
         },
         {
-          "if": { "properties": { "type": { "const": "quest" } } },
-          "then": {
-            "required": ["items"],
+          "if": {
             "properties": {
-              "items": { "type": "array", "items": { "$ref": "#/$defs/questItem" } }
+              "type": {
+                "const": "dropcap"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "letter"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "steps"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "items"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/localizableString"
+                }
+              }
             }
           }
         },
         {
-          "if": { "properties": { "type": { "const": "figure" } } },
-          "then": { "required": ["image"] }
+          "if": {
+            "properties": {
+              "type": {
+                "const": "materials"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "items"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/materialItem"
+                }
+              }
+            }
+          }
         },
         {
-          "if": { "properties": { "type": { "const": "ledger" } } },
-          "then": { "required": ["entries"] }
+          "if": {
+            "properties": {
+              "type": {
+                "const": "recipe"
+              }
+            }
+          },
+          "then": {
+            "oneOf": [
+              {
+                "required": [
+                  "recipe"
+                ],
+                "not": {
+                  "required": [
+                    "output"
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "output"
+                ],
+                "not": {
+                  "required": [
+                    "recipe"
+                  ]
+                }
+              }
+            ]
+          }
         },
         {
-          "if": { "properties": { "type": { "const": "link" } } },
-          "then": { "required": ["to", "text"] }
+          "if": {
+            "properties": {
+              "type": {
+                "const": "callout"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "variant",
+              "text"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "quest"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "items"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/questItem"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "figure"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "image"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "ledger"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "entries"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "link"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "to",
+              "text"
+            ]
+          }
         }
       ]
     },
     "materialItem": {
       "type": "object",
-      "required": ["code"],
+      "required": [
+        "code"
+      ],
       "additionalProperties": false,
       "properties": {
-        "code": { "type": "string", "description": "An item or block code, e.g. game:ingot-iron." },
-        "label": { "$ref": "#/$defs/localizableString" },
-        "count": { "type": "integer", "minimum": 1 }
+        "code": {
+          "type": "string",
+          "description": "An item or block code, e.g. game:ingot-iron."
+        },
+        "label": {
+          "$ref": "#/$defs/localizableString"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "questItem": {
       "type": "object",
-      "required": ["text"],
+      "required": [
+        "text"
+      ],
       "additionalProperties": false,
       "properties": {
-        "text": { "$ref": "#/$defs/localizableString" },
-        "done": { "type": "boolean" }
+        "text": {
+          "$ref": "#/$defs/localizableString"
+        },
+        "done": {
+          "type": "boolean"
+        }
       }
     }
   }
