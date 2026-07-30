@@ -19,6 +19,25 @@ public static class ChapterRenderer
     // Dark ink, for reading on parchment.
     private static readonly double[] Ink = { 0.13, 0.09, 0.05, 1 };
 
+    // Warm parchment-brown default when a chapter declares no accentColor.
+    private static readonly double[] DefaultAccent = { 0.47, 0.33, 0.18, 1 };
+
+    /// <summary>Faked small-caps: plain uppercase. U+2009 thin-space tracking
+    /// rendered as stray glyphs through the GDI font path (in-game 2026-07-28),
+    /// so richtext gets no inserted characters; only Cairo direct draws (the
+    /// running heads) letterspace, by advancing per character.</summary>
+    public static string SmallCaps(string s) => s.ToUpperInvariant();
+
+    /// <summary>Chapter accent from "#rrggbb", else the parchment default.</summary>
+    public static double[] ParseAccent(string? hex)
+    {
+        if (string.IsNullOrEmpty(hex)) return DefaultAccent;
+        string h = hex.TrimStart('#');
+        if (h.Length != 6 || !int.TryParse(h, System.Globalization.NumberStyles.HexNumber, null, out int v))
+            return DefaultAccent;
+        return new[] { ((v >> 16) & 255) / 255.0, ((v >> 8) & 255) / 255.0, (v & 255) / 255.0, 1.0 };
+    }
+
     // Air above a section heading so it reads as a fresh section, never crowding the
     // paragraph before it. Kept tight below (the heading bonds to its first line).
     private const float HeadingTopMargin = 16;
@@ -55,10 +74,18 @@ public static class ChapterRenderer
     /// </summary>
     private static List<Atom> BuildAtoms(ICoreClientAPI capi, GuidePack pack, GuideLibrary library, Action<LinkTextComponent>? onLink)
     {
-        var heading = CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink);
-        var body = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithColor(Ink);
-        var italic = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithSlant(Cairo.FontSlant.Italic).WithColor(Ink);
-        var dropCap = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifDecorative).WithFontSize(34f).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink);
+        double[] accent = ParseAccent(pack.AccentColor);
+
+        // The mockup's typographic voice: small-caps section headers, an airier
+        // body measure, and an accent-colored drop cap two lines tall.
+        var heading = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifDecorative)
+            .WithFontSize(21f).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink);
+        var body = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody)
+            .WithFontSize(16.5f).WithLineHeightMultiplier(1.12).WithColor(Ink);
+        var italic = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody)
+            .WithFontSize(16.5f).WithLineHeightMultiplier(1.12).WithSlant(Cairo.FontSlant.Italic).WithColor(Ink);
+        var dropCap = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifDecorative)
+            .WithFontSize(50f).WithWeight(Cairo.FontWeight.Bold).WithColor(accent);
 
         string initial = DeriveInitial(pack.Byline, pack.Title);
         var atoms = new List<Atom>();
@@ -70,7 +97,7 @@ public static class ChapterRenderer
             var title = new List<RichTextComponentBase>();
             string? secTitle = GuideLibrary.Localize(sec.Title);
             if (!string.IsNullOrEmpty(secTitle))
-                title.Add(new RichTextComponent(capi, secTitle + "\n", heading) { UnscaledMarginTop = HeadingTopMargin });
+                title.Add(new RichTextComponent(capi, SmallCaps(secTitle) + "\n", heading) { UnscaledMarginTop = HeadingTopMargin });
 
             // Unrevealed section: the title stays (it advertises that there is
             // something to earn), the content gives way to a faint hint line.
@@ -95,7 +122,7 @@ public static class ChapterRenderer
             {
                 if (!Gated(capi, block)) continue;
                 var bl = new List<RichTextComponentBase>();
-                RenderBlock(capi, block, bl, body, italic, dropCap, library, onLink, initial);
+                RenderBlock(capi, block, bl, body, italic, dropCap, library, onLink, initial, accent);
                 if (bl.Count > 0) blockLists.Add(bl);
             }
 
@@ -233,7 +260,7 @@ public static class ChapterRenderer
     }
 
     private static void RenderBlock(ICoreClientAPI capi, GuideBlock block, List<RichTextComponentBase> comps,
-        CairoFont body, CairoFont italic, CairoFont dropCap, GuideLibrary library, Action<LinkTextComponent>? onLink, string authorInitial)
+        CairoFont body, CairoFont italic, CairoFont dropCap, GuideLibrary library, Action<LinkTextComponent>? onLink, string authorInitial, double[] accent)
     {
         switch (block.Type)
         {
@@ -252,8 +279,9 @@ public static class ChapterRenderer
             }
 
             case "heading":
-                comps.Add(new RichTextComponent(capi, (block.Str("text") ?? "") + "\n",
-                    CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink))
+                comps.Add(new RichTextComponent(capi, SmallCaps(block.Str("text") ?? "") + "\n",
+                    CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifDecorative).WithFontSize(21f)
+                        .WithWeight(Cairo.FontWeight.Bold).WithColor(Ink))
                     { UnscaledMarginTop = HeadingTopMargin });
                 break;
 
@@ -279,7 +307,10 @@ public static class ChapterRenderer
                 int n = 1;
                 foreach (var it in Arr(block, "items"))
                 {
-                    comps.Add(new RichTextComponent(capi, ordered ? $"  {n}. " : "  • ", body));
+                    if (ordered)
+                        comps.Add(new StepNumberComponent(capi, n, accent));
+                    else
+                        comps.Add(new RichTextComponent(capi, "  • ", body));
                     comps.AddRange(VtmlUtil.Richtextify(capi, it.ToString() + "\n", body, onLink));
                     n++;
                 }
@@ -324,12 +355,19 @@ public static class ChapterRenderer
             }
 
             case "quest":
+            {
+                // Completed objectives recede (muted ink), open ones read at
+                // full strength — the mockup's checked-off voice.
+                var doneFont = italic.Clone().WithColor(new[] { 0.42, 0.36, 0.29, 1.0 });
                 foreach (var it in Arr(block, "items"))
                 {
                     bool done = it["done"]?.Type == JTokenType.Boolean && it["done"]!.Value<bool>();
-                    comps.Add(new RichTextComponent(capi, "  " + (done ? "☑ " : "☐ ") + (it["text"]?.ToString() ?? "") + "\n", italic));
+                    comps.Add(new RichTextComponent(capi,
+                        "  " + (done ? "☑ " : "☐ ") + (it["text"]?.ToString() ?? "") + "\n",
+                        done ? doneFont : italic));
                 }
                 break;
+            }
 
             case "ledger":
                 foreach (var it in Arr(block, "entries"))
