@@ -386,19 +386,14 @@ public class AlmanacIlluminatedModSystem : ModSystem
         bookDialog.TryOpen();
     }
 
-    /// <summary>Closes the book: physical mode stows it with the reverse draw-out
-    /// (the view closes the dialog when the animation ends), flat mode shuts at once.</summary>
-    private void CloseBook()
-    {
-        if (bookDialog == null) return;
-        if (physicalView?.LiveActive == true)
-        {
-            if (physicalView.Closing) physicalView.CancelClose();
-            else physicalView.RequestClose();
-            return;
-        }
-        bookDialog.TryClose();
-    }
+    /// <summary>
+    /// Closes the book. Physical mode stows it with the reverse draw-out and the
+    /// view closes the dialog when the animation lands; flat mode shuts at once.
+    /// Both go through the dialog's TryClose guard, which makes this idempotent:
+    /// one Alt+J can reach both the game's own close and this handler, and asking
+    /// twice must not read as "cancel the stow".
+    /// </summary>
+    private void CloseBook() => bookDialog?.TryClose();
 
     /// <summary>
     /// Choose the presentation and remember it. An open book is reopened in the

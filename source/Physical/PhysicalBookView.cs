@@ -42,6 +42,14 @@ public interface IPhysicalMirror
     bool Closing { get; }
 
     /// <summary>
+    /// The stow has finished (or the view was dismissed outright), so the dialog
+    /// may now actually close. The dialog refuses every close while this is false
+    /// and stows instead, which is what keeps the game's own hotkey close from
+    /// snapping the book shut mid-animation.
+    /// </summary>
+    bool StowComplete { get; }
+
+    /// <summary>
     /// Plays the draw-out in reverse (book folds shut and drops away), then
     /// closes the dialog. Safe to call repeatedly.
     /// </summary>
@@ -241,6 +249,7 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
         liveDialog = null;
         Visible = false;
         closing = false;
+        StowComplete = true;
         OnCaptureUnavailable?.Invoke(reason);
     }
 
@@ -255,14 +264,16 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
 
     public bool Closing => closing;
 
+    /// <summary>See IPhysicalMirror.StowComplete. Latched when the stow lands and when the
+    /// view is dismissed outright; cleared on the next open.</summary>
+    public bool StowComplete { get; private set; }
+
     public void RequestClose()
     {
         if (!LiveActive || closing) return;
         closing = true;
     }
 
-    /// <summary>Alt+P mid-close reopens: the animation reverses from wherever it is.</summary>
-    public void CancelClose() => closing = false;
 
     // Matrices. mv is uniform-scale view placement; A stretches page space to
     // the capture aspect; fold matrices are per side. remapM = mv*A is the
@@ -369,6 +380,7 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
         liveDialog = dialog;
         Visible = true;
         openT = 0f;
+        StowComplete = false;
     }
 
     /// <summary>Leave live mode (dialog closed).</summary>
@@ -376,6 +388,7 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     {
         liveDialog = null;
         Visible = false;
+        StowComplete = true;   // nothing left to animate; a close now is just a close
     }
 
     public string Describe() =>
@@ -847,6 +860,7 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
                 // gui loop is iterating the dialog list right now.
                 openT = 0f;
                 closing = false;
+                StowComplete = true;   // lets the dialog's stow guard pass this one through
                 var dlg = liveDialog;
                 capi.Event.RegisterCallback(_ => dlg?.TryClose(), 0);
             }

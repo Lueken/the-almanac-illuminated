@@ -1439,15 +1439,36 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
             capi.World.Player.Entity, null, true, 8);
     }
 
+    /// <summary>
+    /// The one gate every close passes through, so the book always stows before it
+    /// goes away. Guarding here rather than at each call site is deliberate: the
+    /// game closes this dialog itself, without asking us. GuiDialog.OnKeyDown calls
+    /// TryClose() directly when the toggle hotkey (Alt+J) is pressed on an open
+    /// dialog, and OnKeyCombinationToggle does the same through Toggle(). Neither
+    /// consults our hotkey handler, so patching only our own paths would leave the
+    /// most common one snapping the book shut with no animation.
+    ///
+    /// Refusing the close leaves args.Handled false in the base handler, which is
+    /// what lets our hotkey handler still see the press and treat a second Alt+J
+    /// mid-stow as "reopen".
+    /// </summary>
+    public override bool TryClose()
+    {
+        if (InPhysicalMode && !PhysicalMirror!.StowComplete)
+        {
+            PhysicalMirror.RequestClose();
+            return false;
+        }
+        return base.TryClose();
+    }
+
     public override void OnKeyDown(KeyEvent args)
     {
         base.OnKeyDown(args);
         if (!args.Handled && args.KeyCode == (int)GlKeys.Escape)
         {
-            // Physical mode stows the book (reverse draw-out) instead of
-            // vanishing it; the view closes the dialog when the animation ends.
-            if (InPhysicalMode && !PhysicalMirror!.Closing) PhysicalMirror.RequestClose();
-            else if (!InPhysicalMode) TryClose();
+            // TryClose above turns this into a stow when the book is physical.
+            TryClose();
             args.Handled = true;
         }
     }
