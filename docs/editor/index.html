@@ -294,8 +294,9 @@ function readRecipeFile(text){
 
 let doc = blankDoc();
 function blankDoc(){
-  return {schemaVersion:1, $schema:'', id:'', gate:'', title:'', subtitle:'', byline:'', icon:'',
-          accentColor:'', order:null, overview:false, pinned:false, sections:[newSection()]};
+  return {schemaVersion:1, $schema:'', id:'', gate:'', title:'', tabLabel:'', subtitle:'', byline:'', icon:'',
+          accentColor:'', order:null, overview:false, pinned:false, ribbonTab:false, contents:false,
+          revealedBy:'', sections:[newSection()]};
 }
 function newSection(){ return {id:'', title:'', keepTogether:false, pageBreakBefore:false, revealedBy:'', hint:'', blocks:[]}; }
 function newBlock(type){
@@ -408,7 +409,12 @@ function render(){
   g1.appendChild(field('Gate', doc.gate, v=>doc.gate=v,
     {placeholder:'yourmodid', hint:'The chapter shows only when this mod is loaded. Blank shows always.'}));
   mb.appendChild(g1);
-  mb.appendChild(field('Title', doc.title, v=>doc.title=v, {placeholder:'Fieldwright'}));
+  const gT = el('div','grid2');
+  gT.appendChild(field('Title', doc.title, v=>doc.title=v, {placeholder:'Fieldwright'}));
+  gT.appendChild(field('Tab label', doc.tabLabel, v=>doc.tabLabel=v,
+    {placeholder:'(defaults to the title)',
+     hint:'Short form for the tab, when the title is the wrong words for a narrow slip.'}));
+  mb.appendChild(gT);
   const g2 = el('div','grid2');
   g2.appendChild(field('Subtitle', doc.subtitle, v=>doc.subtitle=v));
   g2.appendChild(field('Byline', doc.byline, v=>doc.byline=v, {placeholder:'set down by Venah'}));
@@ -418,10 +424,19 @@ function render(){
   g3.appendChild(field('Accent colour', doc.accentColor, v=>doc.accentColor=v, {placeholder:'#7a5a2e'}));
   g3.appendChild(field('Order', doc.order, v=>doc.order = v===''?null:parseInt(v,10), {type:'num'}));
   mb.appendChild(g3);
+  // Placement. These four are mutually jealous: the library gives a chapter ONE
+  // home, and silently ignores the losers, so the warnings below earn their keep.
   const g4 = el('div','grid2');
-  g4.appendChild(checkbox('Landing page for the book', doc.overview, v=>doc.overview=v));
+  g4.appendChild(checkbox('Landing page, own tab at the top left', doc.overview, v=>doc.overview=v));
   g4.appendChild(checkbox('Pin above the letter tabs', doc.pinned, v=>doc.pinned=v));
   mb.appendChild(g4);
+  const g5 = el('div','grid2');
+  g5.appendChild(checkbox('Own ribbon tab, out of the A to Z run', doc.ribbonTab, v=>doc.ribbonTab=v));
+  g5.appendChild(checkbox('This is the Index page', doc.contents, v=>doc.contents=v));
+  mb.appendChild(g5);
+  mb.appendChild(field('Revealed by (whole chapter)', doc.revealedBy, v=>doc.revealedBy=v,
+    {placeholder:'yourmod:key-you-report',
+     hint:'Hides the chapter AND its tab until the host reports this key. For a chapter whose title would spoil the one before it. No provider registered means always visible.'}));
   mb.appendChild(field('$schema', doc.$schema, v=>doc.$schema=v,
     {placeholder:'https://…/guide-pack.schema.json', hint:'Optional. Gives code editors autocomplete on the file.'}));
   mb.appendChild(el('div','hint','Any text field takes a literal, or a #langkey such as #yourmod:chapter-title.'));
@@ -586,12 +601,15 @@ function buildJson(){
   if(doc.$schema) o.$schema = doc.$schema;
   o.schemaVersion = 1;
   const put=(k,v)=>{ if(v!==''&&v!=null&&v!==false) o[k]=v; };
-  put('id',doc.id); put('gate',doc.gate); put('title',doc.title);
+  put('id',doc.id); put('gate',doc.gate); put('title',doc.title); put('tabLabel',doc.tabLabel);
   put('subtitle',doc.subtitle); put('byline',doc.byline); put('icon',doc.icon);
   put('accentColor',doc.accentColor);
   if(doc.order!=null && !Number.isNaN(doc.order)) o.order=doc.order;
   if(doc.overview) o.overview=true;
   if(doc.pinned) o.pinned=true;
+  if(doc.ribbonTab) o.ribbonTab=true;
+  if(doc.contents) o.contents=true;
+  put('revealedBy',doc.revealedBy);
   o.sections = doc.sections.map(s=>{
     const x={};
     if(s.id) x.id=s.id;
@@ -631,6 +649,34 @@ function validate(o){
   // sorts by order, then id (SCHEMA.md §3). Only warn for the unpinned case.
   if(o.order!=null && o.gate && !o.pinned)
     out.push(['warn','order is ignored on gated chapters unless the chapter is pinned.']);
+
+  // Placement is exclusive. GuideLibrary drops `pinned` when the chapter already
+  // has a home (ribbonTab, the overview slot, the Index page), and it does it
+  // silently, so an author gets a chapter that simply is not where they put it.
+  if(o.pinned && o.ribbonTab)
+    out.push(['warn','pinned is ignored on a ribbonTab chapter: the ribbon is already its home.']);
+  if(o.pinned && o.overview)
+    out.push(['warn','pinned is ignored on the overview: it has its own tab at the head of the left ribbon.']);
+  if(o.pinned && o.contents)
+    out.push(['warn','pinned is ignored on the Index page: it is reached by the Index tab.']);
+  if(o.overview && o.contents)
+    out.push(['err','A chapter is the landing page or the Index page, not both.']);
+  if(o.ribbonTab && o.contents)
+    out.push(['err','The Index page is reached by its own tab; clear ribbonTab.']);
+  if(o.ribbonTab && o.overview)
+    out.push(['err','The overview already gets its own tab; clear ribbonTab.']);
+
+  // A tab label with no tab is inert: nothing renders it.
+  if(o.tabLabel && !(o.overview || o.pinned || o.ribbonTab))
+    out.push(['warn','tabLabel does nothing here: this chapter has no tab. It applies to the overview slot, a ribbonTab, or the pinned band.']);
+
+  // Pack-level reveal.
+  if(o.revealedBy && !/^[^:\s]+:[^:\s]+/.test(o.revealedBy))
+    out.push(['err','revealedBy must look like namespace:key.']);
+  if(o.revealedBy && o.overview)
+    out.push(['err','The landing page cannot be hidden: revealedBy on the overview leaves the book opening to nothing.']);
+  if(o.revealedBy && o.contents)
+    out.push(['warn','Hiding the Index page hides the map of the book. Reconsider.']);
 
   (o.sections||[]).forEach((s,i)=>{
     const n = s.title ? `"${s.title}"` : `#${i+1}`;
@@ -822,11 +868,20 @@ function layoutSpread(){
     f.append(rh, pn);
   });
 
-  const cols = Math.max(1, Math.round(pages.scrollWidth / (pageW + GUTTER)));
+  // N columns lay out as N*pageW + (N-1)*GUTTER, so invert that exactly rather
+  // than dividing by the pitch and hoping the rounding lands.
+  const cols = Math.max(1, Math.round((pages.scrollWidth + GUTTER) / (pageW + GUTTER)));
   const spreads = Math.max(1, Math.ceil(cols / 2));
   if(spread >= spreads) spread = spreads - 1;
   if(spread < 0) spread = 0;
-  pages.style.transform = `translateX(${-spread * (pageW * 2 + GUTTER)}px)`;
+  // Column PITCH is pageW + GUTTER, and a spread is two columns, so one spread
+  // advances 2*(pageW + GUTTER) — NOT the 2*pageW + GUTTER that spans a spread's
+  // visible width. Those differ by exactly one GUTTER, and using the visible
+  // width left every spread after the first under-shifted by 34px cumulatively:
+  // spread 1 pushed both pages a gutter to the right (page 3 crossed the centre
+  // rule, page 4 ran off the frame), and by spread 2 the 68px error exposed the
+  // right-hand tail of page 4's lines down the left edge of page 5.
+  pages.style.transform = `translateX(${-spread * 2 * (pageW + GUTTER)}px)`;
 
   const p = $('#pager');
   p.innerHTML = '';
@@ -998,9 +1053,11 @@ $('#btn-download').onclick = ()=>{
 /** Load a guide-pack object into the editor. Unknown fields are dropped on
  *  purpose: what round-trips is what the schema defines. */
 function importDoc(o){
-  doc = {schemaVersion:1, $schema:o.$schema||'', id:o.id||'', gate:o.gate||'', title:o.title||'', subtitle:o.subtitle||'',
+  doc = {schemaVersion:1, $schema:o.$schema||'', id:o.id||'', gate:o.gate||'', title:o.title||'',
+         tabLabel:o.tabLabel||'', subtitle:o.subtitle||'',
          byline:o.byline||'', icon:o.icon||'', accentColor:o.accentColor||'',
          order:o.order??null, overview:!!o.overview, pinned:!!o.pinned,
+         ribbonTab:!!o.ribbonTab, contents:!!o.contents, revealedBy:o.revealedBy||'',
          sections:(o.sections||[]).map(s=>({
            id:s.id||'', title:s.title||'', keepTogether:!!s.keepTogether,
            pageBreakBefore:!!s.pageBreakBefore, revealedBy:s.revealedBy||'', hint:s.hint||'',

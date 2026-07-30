@@ -65,6 +65,19 @@
       "type": "boolean",
       "description": "Marks this chapter as the contents/index page. It is kept out of the chapter reading flow and tabs, and reached through the Contents tab instead."
     },
+    "ribbonTab": {
+      "type": "boolean",
+      "description": "Pins this chapter as its own left-ribbon tab, pulled out of the A-Z reading flow. Grouped with the computed tabs and sorted among them by order."
+    },
+    "pinned": {
+      "type": "boolean",
+      "description": "Lifts this chapter into the pinned band: named tabs at the top of the right thumb index, ahead of the letters, sorted by order then id. Allowed on gated chapters."
+    },
+    "revealedBy": {
+      "type": "string",
+      "pattern": "^[^:\\s]+:[^:\\s]+",
+      "description": "Hides the WHOLE chapter, tab included, until the host mod reports this knowledge key. For a chapter whose title would spoil the one before it. Degrades open: no provider registered for the namespace means the chapter is visible."
+    },
     "sections": {
       "type": "array",
       "minItems": 1,
@@ -127,6 +140,15 @@
         "keepTogether": {
           "type": "boolean",
           "description": "Do not split this section across a page boundary. It moves whole to the next page if it does not fit."
+        },
+        "revealedBy": {
+          "type": "string",
+          "pattern": "^[^:\\s]+:[^:\\s]+",
+          "description": "The section's blocks render only when the registered reveal provider for that namespace says the key is earned. No provider registered means always visible."
+        },
+        "hint": {
+          "$ref": "#/$defs/localizableString",
+          "description": "Placeholder line shown while the section is unrevealed. Falls back to the shipped default."
         },
         "blocks": {
           "type": "array",

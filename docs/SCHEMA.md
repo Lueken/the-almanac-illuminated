@@ -69,8 +69,11 @@ The top level of every guide file.
 | `icon` | no | An itemstack code or texture path for the chapter's index icon. |
 | `accentColor` | no | Hex. The chapter's identity color, used on drop-caps and rules. Defaults to a parchment neutral. |
 | `order` | no | Gate-less chapters only. Integer sort position among front matter, lower first. Ties break by `id`. Ignored on gated chapters, except inside the pinned band. |
-| `overview` | no | Gate-less chapters only. Pins this chapter first in the front matter and makes it the book's landing page. For the server overview. See section 11. |
+| `overview` | no | Gate-less chapters only. Pins this chapter first in the front matter, makes it the book's landing page, and gives it its own tab at the head of the left ribbon. It leaves the A-Z run, being the front door rather than an entry. One chapter only; extra claimants are demoted to ordinary front matter with a warning. See section 11. |
 | `pinned` | no | Lifts the chapter into the pinned band: named tabs at the top of the right thumb-index, ahead of the letters, in reading order between the overview and the front matter. Allowed on gated chapters. The band sorts by `order` then `id`. Ignored on ribbon-tab chapters, the overview, and the contents page. |
+| `ribbonTab` | no | Pins this chapter as its own tab on the left ribbon, pulled out of the A-Z reading flow and grouped with the computed tabs, sorted among them by `order`. For a mod that wants a dedicated tab rather than an index entry. |
+| `contents` | no | Marks this chapter as the book's Index page. Kept out of the chapter reading flow and tabs, and reached through the Index tab instead. One per book. Not to be confused with the `contents` BLOCK, which is the auto mod list (section 5). |
+| `revealedBy` | no | Reveal key, `namespace:rest`. Hides the WHOLE chapter, tab included, until the key is earned. A section-level reveal leaves a titled page and a visible tab, which is right for a page the reader should know is coming; use this one for a chapter whose title would spoil the one before it. Degrades open, like every reveal. |
 | `sections` | yes | The ordered content. See section 4. |
 
 Identity is bounded. A chapter sets its `icon`, its `accentColor`, and its content. It does not set its placement, its layout, or its fonts. A chapter carries its own identity. The book keeps its own.
