@@ -75,6 +75,15 @@ public class AlmanacIlluminatedModSystem : ModSystem
     /// authored against an absent mod never produces a permanently dead page. A
     /// provider that throws is treated the same way, for the same reason.
     /// </summary>
+    /// <summary>Point a freshly built library at the same reveal providers the sections use, so
+    /// pack-level `revealedBy` hides a whole chapter and its tab. Called at every construction
+    /// site; a library built before any provider registers simply shows everything, which is the
+    /// degrade-open behaviour and also the right answer during asset load.</summary>
+    private void AttachRevealProbe()
+    {
+        if (library != null) library.RevealProbe = IsRevealed;
+    }
+
     public bool IsRevealed(string key)
     {
         if (string.IsNullOrEmpty(key)) return true;
@@ -187,6 +196,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         // Build the library now (guide packs loaded in AssetsLoaded) so any
         // overview-conflict warning is logged at startup, not only on first open.
         library = new GuideLibrary(api, guidePacks);
+        AttachRevealProbe();
 
         api.Input.RegisterHotKey(GuiDialogIlluminatedBook.HotkeyCode, "Open The Almanac",
             GlKeys.J, HotkeyType.GUIOrOtherControls, altPressed: true);
@@ -316,6 +326,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
             previewLoc = null;
             // Rebuild the library from the packaged guides and swap it back in.
             library = new GuideLibrary(capi, guidePacks);
+        AttachRevealProbe();
             bookDialog?.ReloadLibrary(library);
             IlluminatedLogger.Info(capi, "preview", "Preview off — restored packaged guides");
             return TextCommandResult.Success("Preview off. Showing the packaged guides again.");
@@ -379,6 +390,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
             packs.Insert(0, PreviewSource.BuildErrorChapter(result.Errors));
 
         library = new GuideLibrary(capi, packs);
+        AttachRevealProbe();
         bookDialog?.ReloadLibrary(library);
 
         if (announce || result.Errors.Count > 0)
@@ -462,6 +474,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         string id = hash >= 0 ? rest.Substring(0, hash) : rest;   // section anchors land on page 1 for now
 
         library ??= new GuideLibrary(capi, guidePacks);
+        AttachRevealProbe();
         bookDialog ??= new GuiDialogIlluminatedBook(capi, library, () => homebasePos, EnsureHomebase, bookTabs);
         if (!bookDialog.IsOpened()) bookDialog.TryOpen();
         bookDialog.OpenToChapter(id);
@@ -474,6 +487,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         // The whole visible library, ordered: the book opens to the overview (or
         // first front matter) and navigates between chapters via internal links.
         library ??= new GuideLibrary(capi, guidePacks);
+        AttachRevealProbe();
         bookDialog ??= new GuiDialogIlluminatedBook(capi, library, () => homebasePos, EnsureHomebase, bookTabs);
 
         if (bookDialog.IsOpened()) bookDialog.TryClose();

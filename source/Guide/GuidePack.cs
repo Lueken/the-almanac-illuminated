@@ -40,6 +40,16 @@ public class GuidePack
     /// band keeps its spirit through the same total ordering front matter uses).</summary>
     public bool Pinned;
 
+    /// <summary>Hides the WHOLE chapter, tab included, until the host mod reports this
+    /// knowledge key as earned (same provider contract as a section's `revealedBy`).
+    ///
+    /// A section-level reveal leaves an empty titled page and a visible tab, which is the
+    /// right shape for a page the reader should know is coming. A pack-level reveal is for a
+    /// chapter that should not exist yet: the second stage of a road, where even the title
+    /// would spoil the first. Degrades open, like every other reveal: no provider registered
+    /// for the namespace means the chapter is visible.</summary>
+    public string? RevealedBy;
+
     public List<GuideSection> Sections = new();
 
     /// <summary>Asset location this pack was read from. For logs and diagnostics.</summary>

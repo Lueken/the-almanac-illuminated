@@ -48,6 +48,10 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         var host = capi.ModLoader.GetModSystem<AlmanacIlluminatedModSystem>();
         if (host == null) return "";
         System.Text.StringBuilder? sb = null;
+        // The chapter's own reveal leads the stamp: earning a pack-level key changes the book's
+        // shape (a tab appears), not merely a page's contents, so it must invalidate the cache.
+        if (!string.IsNullOrEmpty(pack.RevealedBy))
+            (sb ??= new System.Text.StringBuilder()).Append(host.IsRevealed(pack.RevealedBy!) ? 'P' : 'p');
         foreach (var sec in pack.Sections)
         {
             if (string.IsNullOrEmpty(sec.RevealedBy)) continue;

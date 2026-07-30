@@ -29,7 +29,29 @@ public sealed class GuideLibrary
     };
 
     public IReadOnlyList<GuidePack> All { get; }
-    public IReadOnlyList<GuidePack> Ordered { get; }
+
+    /// <summary>Reveal probe for pack-level `revealedBy`, wired to the host's providers. Null
+    /// (or an unregistered namespace) means every chapter is visible, matching the degrade-open
+    /// rule the section-level reveals already follow.</summary>
+    public Func<string, bool>? RevealProbe { get; set; }
+
+    /// <summary>Whether a chapter is currently readable at all. A pack-level reveal hides the
+    /// chapter AND its tab, so an unearned second stage does not advertise itself.</summary>
+    public bool IsVisible(GuidePack pack)
+        => string.IsNullOrEmpty(pack.RevealedBy) || RevealProbe == null || RevealProbe(pack.RevealedBy!);
+
+    /// <summary>Reading order as the player may currently see it. Filtered live rather than at
+    /// load, because a chapter can be earned mid-session; everything downstream (Next, Prev,
+    /// Default, the thumb index, paging) inherits the filter for free by going through here.</summary>
+    public IReadOnlyList<GuidePack> Ordered
+        => allOrdered.Count == 0 || RevealProbe == null
+            ? allOrdered
+            : allOrdered.Where(IsVisible).ToList();
+
+    /// <summary>Unfiltered reading order, for callers that must see hidden chapters.</summary>
+    public IReadOnlyList<GuidePack> OrderedIncludingHidden => allOrdered;
+
+    private readonly List<GuidePack> allOrdered;
 
     /// <summary>The one chapter that holds the overview slot, or null if none claims it.</summary>
     public GuidePack? Overview { get; }
@@ -47,7 +69,12 @@ public sealed class GuideLibrary
     /// <summary>The pinned band: chapters lifted above the A-Z run as named tabs at the
     /// top of the right thumb-index, sorted by `order` then `id`. Gated chapters may pin;
     /// the deterministic total ordering is what keeps competing packs from colliding.</summary>
-    public IReadOnlyList<GuidePack> PinnedChapters { get; }
+    public IReadOnlyList<GuidePack> PinnedChapters
+        => allPinned.Count == 0 || RevealProbe == null
+            ? allPinned
+            : allPinned.Where(IsVisible).ToList();
+
+    private readonly List<GuidePack> allPinned;
 
     public GuideLibrary(ICoreClientAPI capi, List<GuidePack> packs)
     {
@@ -72,13 +99,13 @@ public sealed class GuideLibrary
 
         // The pinned band. Ribbon tabs, the overview, and the contents page have their
         // own homes already; pinning them too would double-place them, so it is ignored.
-        PinnedChapters = packs
+        allPinned = packs
             .Where(p => p.Pinned && !p.RibbonTab && p != Overview && p != ContentsPage)
             .OrderBy(p => p.Order ?? int.MaxValue)
             .ThenBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        Ordered = BuildOrder(packs, Overview, ContentsPage);
+        allOrdered = BuildOrder(packs, Overview, ContentsPage);
 
         if (OverviewConflicts.Count > 0)
         {
