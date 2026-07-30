@@ -469,6 +469,11 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     public string[] PhysLeftTabs = Array.Empty<string>();
     public string[] PhysRightTabs = Array.Empty<string>();
     public int PhysLeftActive = -1, PhysRightActive = -1;
+
+    /// <summary>How many of each strip's trailing tabs hang from the foot of the page
+    /// rather than following on from the top. See GuiElementChapterTabs for the flat
+    /// side of the same contract.</summary>
+    public int PhysLeftBottom, PhysRightBottom;
     private List<Action> physLeftActions = new(), physRightActions = new();
 
     private bool TrySideTabClick(int x, int y)
@@ -482,9 +487,13 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         float rowB = PhysicalBookView.SideTabRow0 - row * PhysicalBookView.SideTabRowStep;
         if (Math.Abs(b - rowB) > PhysicalBookView.SideTabHalfB) return false;
 
+        // A row slot is not an array position once a group hangs from the foot, so ask
+        // the renderer's own mapping rather than reimplementing it here.
         var actions = leftSide ? physLeftActions : physRightActions;
-        if (row < 0 || row >= actions.Count) return false;
-        actions[row]();
+        int bottom = leftSide ? PhysLeftBottom : PhysRightBottom;
+        int index = PhysicalBookView.SideTabIndexForRow(row, actions.Count, bottom);
+        if (index < 0 || index >= actions.Count) return false;
+        actions[index]();
         return true;
     }
 
@@ -956,7 +965,7 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         if (hasTabs)
         {
             BuildTabStrips(out var lLabels, out var lActions, out var lActive,
-                           out var rLabels, out var rActions, out var rActive);
+                           out var rLabels, out var rActions, out var rActive, out int lBottom);
             if (InPhysicalMode)
             {
                 // Physical mode: the tabs are modeled paper slips on the page
@@ -964,12 +973,13 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
                 // data instead of composing the drawn ribbons.
                 PhysLeftTabs = lLabels; PhysRightTabs = rLabels;
                 PhysLeftActive = lActive; PhysRightActive = rActive;
+                PhysLeftBottom = lBottom; PhysRightBottom = 0;
                 physLeftActions = lActions; physRightActions = rActions;
             }
             else
             {
                 composer.AddInteractiveElement(
-                    new GuiElementChapterTabs(capi, leftTabs!, lLabels, lActive, i => lActions[i](), BookTabSide.Left), "lefttabs");
+                    new GuiElementChapterTabs(capi, leftTabs!, lLabels, lActive, i => lActions[i](), BookTabSide.Left, lBottom), "lefttabs");
                 composer.AddInteractiveElement(
                     new GuiElementChapterTabs(capi, rightTabs!, rLabels, rActive, i => rActions[i](), BookTabSide.Right), "righttabs");
             }
@@ -1046,7 +1056,8 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     /// the split, the way a thumb-index moves as you read deeper into the book.
     /// </summary>
     private void BuildTabStrips(out string[] leftLabels, out List<Action> leftActions, out int leftActive,
-                                out string[] rightLabels, out List<Action> rightActions, out int rightActive)
+                                out string[] rightLabels, out List<Action> rightActions, out int rightActive,
+                                out int leftBottom)
     {
         var ordered = library.Ordered;
         var pinned = library.PinnedChapters;
@@ -1054,9 +1065,10 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         var firstByLetter = new Dictionary<char, int>();
         for (int i = 0; i < ordered.Count; i++)
         {
-            // The pinned band gets named tabs of its own; letting it claim letters
-            // would make the thumb-index jump to curated chapters instead of the run.
-            if (pinned.Contains(ordered[i])) continue;
+            // The pinned band and the overview all get named tabs of their own; letting
+            // them claim letters would make the thumb-index jump to curated chapters
+            // instead of the run. The overview is the book's front door, not an entry.
+            if (pinned.Contains(ordered[i]) || ordered[i] == library.Overview) continue;
             char l = LetterOf(library.Title(ordered[i]));
             if (!firstByLetter.ContainsKey(l)) { firstByLetter[l] = i; letters.Add(l); }
         }
@@ -1066,19 +1078,31 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         // Journal, Crops) have no letter, and neither does the pinned band, so on
         // those the whole alphabet sits on the right.
         bool curIsPinned = current != null && pinned.Contains(current);
+        bool curIsOverview = current != null && current == library.Overview;
         char cur = (!journalMode && !cropsMode && !weatherMode && externalTab == null
-                && current != null && !curIsPinned && library.OrderIndex(current) >= 0)
+                && current != null && !curIsPinned && !curIsOverview && library.OrderIndex(current) >= 0)
             ? LetterOf(library.Title(current)) : '\0';
 
-        var lLabels = new List<string> { "Contents", "Journal", "Crops", "Weather" };
-        leftActions = new List<Action> { OnContents, OnJournal, OnCrops, OnWeather };
+        // The left edge reads top to bottom as broad to particular. The overview is the
+        // front door and sits alone at the head; the reading tabs follow; the book's own
+        // tools hang from the foot, held apart so the two groups never read as one list.
+        var lLabels = new List<string>();
+        leftActions = new List<Action>();
+        int leftHit = -1;
+
+        var overview = library.Overview;
+        if (overview != null)
+        {
+            GuidePack front = overview;
+            if (curIsOverview) leftHit = lLabels.Count;
+            lLabels.Add(library.TabTitle(front));
+            leftActions.Add(() => OpenChapter(front));
+        }
 
         // The mod-tab band: computed tabs and ribbon-tab chapters, one ordering.
-        var modTabs = BuildModTabs();
-        int modActive = -1;
-        foreach (ModTabEntry mt in modTabs)
+        foreach (ModTabEntry mt in BuildModTabs())
         {
-            if (mt.IsActive()) modActive = lLabels.Count;
+            if (mt.IsActive()) leftHit = lLabels.Count;
             lLabels.Add(mt.Label);
             leftActions.Add(mt.Activate);
         }
@@ -1089,9 +1113,19 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
             lLabels.Add(l.ToString());
             leftActions.Add(() => OpenChapter(ordered[idx]));
         }
+
+        // The foot group: the reader's own tools, not the pack's chapters.
+        string[] toolLabels = { "Journal", "Crops", "Weather", "Index" };
+        var toolActions = new Action[] { OnJournal, OnCrops, OnWeather, OnContents };
+        int toolActive = weatherMode ? 2 : cropsMode ? 1 : journalMode ? 0
+            : (current != null && current == library.ContentsPage) ? 3 : -1;
+        if (toolActive >= 0) leftHit = lLabels.Count + toolActive;
+        lLabels.AddRange(toolLabels);
+        leftActions.AddRange(toolActions);
+
         leftLabels = lLabels.ToArray();
-        leftActive = modActive >= 0 ? modActive
-            : weatherMode ? 3 : cropsMode ? 2 : journalMode ? 1 : (current == library.ContentsPage ? 0 : -1);
+        leftBottom = toolLabels.Length;
+        leftActive = leftHit;
 
         // The pinned band heads the right strip as named tabs, always visible
         // regardless of how deep into the alphabet the reader is.
@@ -1102,7 +1136,7 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         {
             if (curIsPinned && p == current) pinnedActive = rLabels.Count;
             var chapter = p;
-            rLabels.Add(library.Title(p));
+            rLabels.Add(library.TabTitle(p));
             rightActions.Add(() => OpenChapter(chapter));
         }
         foreach (char l in letters)

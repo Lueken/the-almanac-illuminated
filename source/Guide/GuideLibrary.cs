@@ -167,6 +167,14 @@ public sealed class GuideLibrary
     /// <summary>A chapter's title, localized, for the title bar and indexes.</summary>
     public string Title(GuidePack p) => Localize(p.Title) ?? p.Id ?? "Untitled";
 
+    /// <summary>What this chapter calls itself on a tab: `tabLabel` when the author set one,
+    /// otherwise the title. See <see cref="GuidePack.TabLabel"/>.</summary>
+    public string TabTitle(GuidePack p)
+    {
+        string? label = Localize(p.TabLabel);
+        return string.IsNullOrWhiteSpace(label) ? Title(p) : label;
+    }
+
     private List<GuidePack> BuildOrder(List<GuidePack> packs, GuidePack? overview, GuidePack? contents)
     {
         bool IsFront(GuidePack p) => string.IsNullOrEmpty(p.Gate);

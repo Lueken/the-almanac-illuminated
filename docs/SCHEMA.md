@@ -63,6 +63,7 @@ The top level of every guide file.
 | `id` | yes | Unique chapter id. Namespace it with your author domain to avoid collisions. Internal links resolve to it. |
 | `gate` | no | The modid required for visibility. Omit to always show. |
 | `title` | yes | The chapter title. A literal or a `#langkey`. |
+| `tabLabel` | no | Short label for this chapter's TAB when the title is the wrong words for a narrow slip. Falls back to `title`. Applies to the overview slot, a `ribbonTab`, and the pinned band. |
 | `subtitle` | no | One line under the title. |
 | `byline` | no | Attribution line. |
 | `icon` | no | An itemstack code or texture path for the chapter's index icon. |

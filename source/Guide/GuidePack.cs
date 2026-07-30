@@ -50,6 +50,14 @@ public class GuidePack
     /// for the namespace means the chapter is visible.</summary>
     public string? RevealedBy;
 
+    /// <summary>Short label for this chapter's TAB, when the title is the wrong words for a
+    /// tab. Falls back to `title`. A server adopting the book wants its overview tab to read
+    /// with its own name ("The Quire") while the chapter itself still reads "The Almanac";
+    /// long titles on a narrow slip want a short form. Runs through the '#langkey' convention
+    /// like every other string. Honoured anywhere a chapter becomes a tab: the overview slot,
+    /// a `ribbonTab`, and the pinned band.</summary>
+    public string? TabLabel;
+
     public List<GuideSection> Sections = new();
 
     /// <summary>Asset location this pack was read from. For logs and diagnostics.</summary>

@@ -1,6 +1,7 @@
 using System;
 using Cairo;
 using Vintagestory.API.Client;
+using Vintagestory.API.MathTools;
 
 namespace AlmanacIlluminated;
 
@@ -12,6 +13,12 @@ public enum BookTabSide { Left, Right }
 /// ribbons mirror that on the left. Each ribbon bears a short label; the active
 /// one reads brighter and reaches a touch further out.
 ///
+/// The last <c>bottomCount</c> tabs hang from the FOOT of the strip instead of
+/// following on from the top group. That is what separates the book's own tools
+/// (Journal, Crops, Weather, Index) from the reading tabs above them. Capacity is
+/// this element's own business: the physical renderer anchors the same group to
+/// the same edge using its own metrics, so neither needs a shared row count.
+///
 /// Drawn and hit-tested here directly. The native vertical tabs draw right-facing
 /// tabs on one side of their bounds but test clicks on the other, so they cannot
 /// be clicked. This avoids that.
@@ -19,6 +26,7 @@ public enum BookTabSide { Left, Right }
 public class GuiElementChapterTabs : GuiElement
 {
     private readonly string[] labels;
+    private readonly int bottomCount;
     private readonly int activeIndex;
     private readonly Action<int> onClick;
     private readonly BookTabSide side;
@@ -39,15 +47,27 @@ public class GuiElementChapterTabs : GuiElement
     private static double Skew(int i) => ((i * 7 + 3) % 5 - 2) * 1.1;          // -2.2..+2.2 deg
     private static double Tint(int i) => ((i * 5 + 1) % 4 - 1.5) * 0.014;      // subtle per-slip shade
 
-    public GuiElementChapterTabs(ICoreClientAPI capi, ElementBounds bounds, string[] labels, int activeIndex, Action<int> onClick, BookTabSide side = BookTabSide.Right) : base(capi, bounds)
+    public GuiElementChapterTabs(ICoreClientAPI capi, ElementBounds bounds, string[] labels, int activeIndex,
+        Action<int> onClick, BookTabSide side = BookTabSide.Right, int bottomCount = 0) : base(capi, bounds)
     {
         this.labels = labels;
+        this.bottomCount = GameMath.Clamp(bottomCount, 0, labels.Length);
         this.activeIndex = activeIndex;
         this.onClick = onClick;
         this.side = side;
         fontActive = CairoFont.WhiteSmallText().WithFontSize(15).WithColor(new[] { 0.13, 0.09, 0.05, 1.0 });
         fontIdle = CairoFont.WhiteSmallText().WithFontSize(15).WithColor(new[] { 0.20, 0.14, 0.08, 1.0 });
         texture = new LoadedTexture(capi);
+    }
+
+    /// <summary>Top of tab i. The top group runs down from 0; the bottom group runs up
+    /// from the foot, so it stays pinned however many tabs sit above it.</summary>
+    private double RowY(int i)
+    {
+        int topCount = labels.Length - bottomCount;
+        if (i < topCount) return i * (tabH + gap);
+        int fromBottom = labels.Length - 1 - i;
+        return Bounds.InnerHeight - tabH - fromBottom * (tabH + gap);
     }
 
     public override void ComposeElements(Context ctxStatic, ImageSurface surfaceStatic)
@@ -61,9 +81,9 @@ public class GuiElementChapterTabs : GuiElement
         ctx.SetSourceRGBA(0, 0, 0, 0);
         ctx.Paint();
 
-        double y = 0;
         for (int i = 0; i < labels.Length; i++)
         {
+            double y = RowY(i);
             bool active = i == activeIndex;
             double w = active ? fullW : fullW - scaled(IdleShrink);
             // Right ribbons grow from the left (book) edge; left ribbons grow from the right (book) edge.
@@ -104,7 +124,6 @@ public class GuiElementChapterTabs : GuiElement
             ctx.ShowText(labels[i]);
 
             ctx.Restore();
-            y += tabH + gap;
         }
 
         generateTexture(surface, ref texture);
@@ -126,16 +145,15 @@ public class GuiElementChapterTabs : GuiElement
         double mx = args.X - Bounds.absX;
         double my = args.Y - Bounds.absY;
         if (mx < 0 || mx > Bounds.InnerWidth) return;
-        double y = 0;
         for (int i = 0; i < labels.Length; i++)
         {
+            double y = RowY(i);
             if (my >= y && my <= y + tabH)
             {
                 onClick(i);
                 args.Handled = true;
                 return;
             }
-            y += tabH + gap;
         }
     }
 

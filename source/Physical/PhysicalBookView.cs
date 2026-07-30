@@ -156,6 +156,39 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     public const float SideTabAInner = 0.96f;
     public const float SideTabAOuter = 1.12f;
     public const float SideTabHalfB = 0.052f;
+
+    /// <summary>Row slots down one page edge, from SideTabRow0 to roughly its mirror
+    /// at the foot. The bottom-anchored group hangs off the last of these.</summary>
+    public const int SideTabRowCount = 15;
+
+    /// <summary>
+    /// Which row slot a tab occupies. The last <paramref name="bottomCount"/> tabs
+    /// hang from the foot; everything else runs down from the top. ONE implementation
+    /// for the renderer and the hit test, because a disagreement between those two is
+    /// a tab you can see and cannot click.
+    ///
+    /// If the two groups would collide on a crowded strip, the anchor is abandoned and
+    /// everything runs sequentially: overlapping slips are worse than an unanchored key.
+    /// </summary>
+    public static int SideTabRow(int index, int total, int bottomCount)
+    {
+        int topCount = total - bottomCount;
+        if (bottomCount <= 0 || topCount + bottomCount > SideTabRowCount) return index;
+        if (index < topCount) return index;
+        return SideTabRowCount - 1 - (total - 1 - index);
+    }
+
+    /// <summary>The inverse of <see cref="SideTabRow"/>: the tab in a row slot, or -1 for an empty slot.</summary>
+    public static int SideTabIndexForRow(int row, int total, int bottomCount)
+    {
+        int topCount = total - bottomCount;
+        if (bottomCount <= 0 || topCount + bottomCount > SideTabRowCount)
+            return row >= 0 && row < total ? row : -1;
+        if (row >= 0 && row < topCount) return row;
+        int fromBottom = SideTabRowCount - 1 - row;
+        if (fromBottom >= 0 && fromBottom < bottomCount) return total - 1 - fromBottom;
+        return -1;
+    }
     private MeshRef? tabLeftRef, tabRightRef;
     private static readonly Vec4f TabTintA = new(0.96f, 0.92f, 0.80f, 1f);
     private static readonly Vec4f TabTintB = new(0.87f, 0.81f, 0.69f, 1f);
@@ -704,19 +737,19 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
         // lies on the spread, the rest tuck under the page edge.
         bool tabsReady = ModelEnabled && tabLeftRef != null && liveDialog != null;
 
-        void DrawSideTab(bool leftSide, int i, string label, bool active)
+        void DrawSideTab(bool leftSide, int i, int row, string label, bool active)
         {
             var mesh = leftSide ? tabLeftRef! : tabRightRef!;
             var sideM = leftSide ? mvQuadLeft : mvQuadRight;
             float sink = active ? 0f : -0.022f;
             float outShift = active ? (leftSide ? -0.012f : 0.012f) : 0f;
-            float db = -(i * SideTabRowStep);
+            float db = -(row * SideTabRowStep);
 
             Mat4f.Identity(slotT);
             Mat4f.Translate(slotT, slotT, outShift, db, sink);
             Mat4f.Mul(slotM, sideM, slotT);
             Mat4f.Mul(slotM, slotM, modelNorm);
-            var tint = active ? TabTintActive : (i % 2 == 0 ? TabTintA : TabTintB);
+            var tint = active ? TabTintActive : (row % 2 == 0 ? TabTintA : TabTintB);
             DrawMesh(mesh, atlasTexId, slotM, normalShaded: 1, tint: tint);
 
             if (label.Length > 0 && labelQuadHRef != null)
@@ -751,9 +784,11 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
                 bool leftSide = s == 0;
                 var labels = leftSide ? liveDialog!.PhysLeftTabs : liveDialog!.PhysRightTabs;
                 int active = leftSide ? liveDialog.PhysLeftActive : liveDialog.PhysRightActive;
+                int bottom = leftSide ? liveDialog.PhysLeftBottom : liveDialog.PhysRightBottom;
                 for (int i = 0; i < labels.Length; i++)
                 {
-                    if ((i == active) == activePass) DrawSideTab(leftSide, i, labels[i], i == active);
+                    if ((i == active) == activePass)
+                        DrawSideTab(leftSide, i, SideTabRow(i, labels.Length, bottom), labels[i], i == active);
                 }
             }
         }
