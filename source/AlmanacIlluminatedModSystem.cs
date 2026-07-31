@@ -38,6 +38,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
     private const string PresentationHotkeyCode = "almanacilluminatedpresentation";
     private PhysicalBookView? physicalView;
     private bool physicalPreferred = true;
+    /// <summary>Pause the singleplayer world while the book is open. Default on; the book
+    /// exists to be read, and reading should not cost daylight.</summary>
+    private bool pauseOnOpen = true;
     private static string SettingsPath => System.IO.Path.Combine(
         Vintagestory.API.Config.GamePaths.DataPath, "ModData", "almanacilluminated", "settings.json");
 
@@ -140,7 +143,25 @@ public class AlmanacIlluminatedModSystem : ModSystem
         serverChannel = api.Network.RegisterChannel(ChannelName)
             .RegisterMessageType<HomebaseRequest>()
             .RegisterMessageType<HomebaseResponse>()
-            .SetMessageHandler<HomebaseRequest>(OnHomebaseRequest);
+            .RegisterMessageType<ReadingState>()
+            .SetMessageHandler<HomebaseRequest>(OnHomebaseRequest)
+            .SetMessageHandler<ReadingState>(OnReadingState);
+
+        // A crash or disconnect mid-read must not strand the flag: reading state is
+        // session-scoped, so every join starts with it clear.
+        api.Event.PlayerNowPlaying += p =>
+            p.Entity?.WatchedAttributes?.SetBool(ReadingHands.Attr, false);
+    }
+
+    /// <summary>Stamp the reading flag on the player entity. Watched attributes
+    /// broadcast to every client, which is the whole point: ReadingHands renders the
+    /// open book in this player's hands on every screen that can see them.</summary>
+    private void OnReadingState(IServerPlayer fromPlayer, ReadingState msg)
+    {
+        var wa = fromPlayer.Entity?.WatchedAttributes;
+        if (wa == null) return;
+        wa.SetBool(ReadingHands.Attr, msg.Reading);
+        wa.MarkPathDirty(ReadingHands.Attr);
     }
 
     private void OnHomebaseRequest(IServerPlayer fromPlayer, HomebaseRequest req)
@@ -194,7 +215,12 @@ public class AlmanacIlluminatedModSystem : ModSystem
         clientChannel = api.Network.RegisterChannel(ChannelName)
             .RegisterMessageType<HomebaseRequest>()
             .RegisterMessageType<HomebaseResponse>()
+            .RegisterMessageType<ReadingState>()
             .SetMessageHandler<HomebaseResponse>(OnHomebaseResponse);
+
+        // The in-hands book (renderer patch). Init only wires the hook; the dummy
+        // item resolves lazily on first render, after registries are ready.
+        ReadingHands.Init(api);
 
         // Register bundled fonts before any GUI can request them.
         FontRegistry.RegisterAll(api);
@@ -229,7 +255,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         api.Input.SetHotKeyHandler(PresentationHotkeyCode, _ => { TogglePresentation(); return true; });
 
         api.ChatCommands.Create("almbook")
-            .WithDescription("Almanac presentation. No args: report. Args: physical | flat, or a physical-book knob (tilt|yaw|dist|scale|fov|height <n>, model <0|1>, reset)")
+            .WithDescription("Almanac presentation. No args: report. Args: physical | flat, pause [on|off] (singleplayer reading pause), or a physical-book knob (tilt|yaw|dist|scale|fov|height <n>, model <0|1>, reset)")
             .WithArgs(api.ChatCommands.Parsers.OptionalAll("arg"))
             .HandleWith(OnBookCommand);
 
@@ -364,6 +390,14 @@ public class AlmanacIlluminatedModSystem : ModSystem
         library ??= new GuideLibrary(capi, guidePacks);
         AttachRevealProbe();
         bookDialog = new GuiDialogIlluminatedBook(capi, library, () => homebasePos, EnsureHomebase, bookTabs);
+        bookDialog.PauseOnOpenPref = () => pauseOnOpen;
+        bookDialog.OnReadingChanged = reading =>
+        {
+            // Local truth first: the reader's own render never waits on the server
+            // (in paused singleplayer that round-trip is frozen until close).
+            ReadingHands.LocalReading = reading;
+            clientChannel?.SendPacket(new ReadingState { Reading = reading });
+        };
         bookDialog.PhysicalMirror = physicalView;
         bookDialog.OnOpened += () => capi?.World.Player.Entity.AnimManager.StartAnimation(ReadingAnimCode);
         bookDialog.OnClosed += () =>
@@ -465,7 +499,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         {
             if (!System.IO.File.Exists(SettingsPath)) return;
             var cfg = Newtonsoft.Json.JsonConvert.DeserializeObject<BookSettings>(System.IO.File.ReadAllText(SettingsPath));
-            if (cfg != null) physicalPreferred = cfg.Physical;
+            if (cfg != null) { physicalPreferred = cfg.Physical; pauseOnOpen = cfg.PauseOnOpen; }
         }
         catch (Exception e)
         {
@@ -479,7 +513,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         {
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SettingsPath)!);
             System.IO.File.WriteAllText(SettingsPath,
-                Newtonsoft.Json.JsonConvert.SerializeObject(new BookSettings { Physical = physicalPreferred }));
+                Newtonsoft.Json.JsonConvert.SerializeObject(new BookSettings { Physical = physicalPreferred, PauseOnOpen = pauseOnOpen }));
         }
         catch (Exception e)
         {
@@ -490,6 +524,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
     private class BookSettings
     {
         public bool Physical = true;
+        /// <summary>Singleplayer reading pause (on by default; `.almbook pause off` to
+        /// keep the days moving). Saved but inert in multiplayer.</summary>
+        public bool PauseOnOpen = true;
     }
 
     /// <summary>
@@ -523,13 +560,34 @@ public class AlmanacIlluminatedModSystem : ModSystem
             case "reset":
                 physicalView.Reset();
                 return TextCommandResult.Success($"Reset. {physicalView.Describe()}");
+            case "hand":
+                return OnHandKnob(parts);
+            case "pause":
+            {
+                if (parts.Length < 2)
+                    return TextCommandResult.Success(pauseOnOpen
+                        ? "The world holds still while the book is open (singleplayer). '.almbook pause off' lets it run."
+                        : "The world runs on while you read. '.almbook pause on' holds it still (singleplayer).");
+                string setTo = parts[1].ToLowerInvariant();
+                if (setTo != "on" && setTo != "off")
+                    return TextCommandResult.Error("Usage: .almbook pause [on|off]");
+                pauseOnOpen = setTo == "on";
+                SaveSettings();
+                // Answer immediately if the book is open right now, not on the next open.
+                bookDialog?.ApplyPauseNow(pauseOnOpen);
+                string note = capi.IsSinglePlayer && !capi.OpenedToLan ? ""
+                    : " (applies in singleplayer; this session is not)";
+                return TextCommandResult.Success((pauseOnOpen
+                    ? "The world will hold still while the book is open."
+                    : "The world will run on while you read.") + note);
+            }
         }
 
         if (parts.Length < 2 || !float.TryParse(parts[1],
                 System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v))
         {
             return TextCommandResult.Error(
-                "Usage: .almbook | .almbook physical|flat | .almbook tilt|yaw|dist|scale|fov|height <n> | .almbook model <0|1> | .almbook reset");
+                "Usage: .almbook | .almbook physical|flat | .almbook pause [on|off] | .almbook tilt|yaw|dist|scale|fov|height <n> | .almbook model <0|1> | .almbook reset");
         }
 
         switch (verb)
@@ -544,11 +602,63 @@ public class AlmanacIlluminatedModSystem : ModSystem
             case "quad": physicalView.QuadEnabled = v != 0; break;
             default:
                 return TextCommandResult.Error(
-                    $"Unknown knob '{verb}'. physical, flat, tilt, yaw, dist, scale, fov, height, model, quad, reset, status.");
+                    $"Unknown knob '{verb}'. physical, flat, pause, tilt, yaw, dist, scale, fov, height, model, quad, reset, status.");
         }
 
         IlluminatedLogger.Info(capi, "physical", $"almbook: {physicalView.Describe()}");
         return TextCommandResult.Success(physicalView.Describe());
+    }
+
+    /// <summary>
+    /// `.almbook hand ...` — live-tune where the reading book sits in the character's
+    /// hand (the in-world ReadingHands render). Mutates the dummy item's own
+    /// tpHandTransform, so the next frame shows it; when the numbers look right they
+    /// get baked into itemtypes/almanac.json as the shipped default. Session-only by
+    /// design, the same posture as the physical-view knobs.
+    /// </summary>
+    private Vintagestory.API.Common.ModelTransform? handTransformOriginal;
+
+    private TextCommandResult OnHandKnob(string[] parts)
+    {
+        var item = capi?.World.GetItem(new AssetLocation("almanacilluminated", "almanac"));
+        if (item?.TpHandTransform == null) return TextCommandResult.Error("The reading book item is not available.");
+        var tf = item.TpHandTransform;
+        handTransformOriginal ??= tf.Clone();
+
+        // No '=(' sequences: emoji chat mods (emojime is in the pack) read that as a
+        // sad-face emoticon and eat the paren, mangling the whole readout.
+        string Show() =>
+            $"hand | t {tf.Translation.X:0.###} {tf.Translation.Y:0.###} {tf.Translation.Z:0.###}" +
+            $" | r {tf.Rotation.X:0.#} {tf.Rotation.Y:0.#} {tf.Rotation.Z:0.#}" +
+            $" | o {tf.Origin.X:0.###} {tf.Origin.Y:0.###} {tf.Origin.Z:0.###}" +
+            $" | scale {tf.ScaleXYZ.X:0.###}";
+
+        if (parts.Length < 2) return TextCommandResult.Success(Show());
+        string knob = parts[1].ToLowerInvariant();
+        if (knob == "reset")
+        {
+            var o = handTransformOriginal;
+            tf.Translation.Set(o.Translation); tf.Rotation.Set(o.Rotation);
+            tf.Origin.Set(o.Origin); tf.ScaleXYZ.Set(o.ScaleXYZ);
+            return TextCommandResult.Success("Reset. " + Show());
+        }
+        if (parts.Length < 3 || !float.TryParse(parts[2],
+                System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v))
+            return TextCommandResult.Error("Usage: .almbook hand | .almbook hand reset | .almbook hand tx|ty|tz|rx|ry|rz|scale <n>");
+
+        switch (knob)
+        {
+            case "tx": tf.Translation.X = v; break;
+            case "ty": tf.Translation.Y = v; break;
+            case "tz": tf.Translation.Z = v; break;
+            case "rx": tf.Rotation.X = v; break;
+            case "ry": tf.Rotation.Y = v; break;
+            case "rz": tf.Rotation.Z = v; break;
+            case "scale": tf.ScaleXYZ.Set(v, v, v); break;
+            default:
+                return TextCommandResult.Error($"Unknown hand knob '{knob}'. tx, ty, tz, rx, ry, rz, scale, reset.");
+        }
+        return TextCommandResult.Success(Show());
     }
 
     // --- Author preview ---------------------------------------------------
@@ -736,6 +846,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
 
     public override void Dispose()
     {
+        ReadingHands.Dispose();
         StopPreviewWatcher();
         physicalView?.Dispose();
         physicalView = null;

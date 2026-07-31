@@ -23,6 +23,33 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
 {
     public const string HotkeyCode = "almanacilluminatedbook";
 
+    /// <summary>Singleplayer reading pause, supplied by the mod system (persisted with the
+    /// book settings, toggled with `.almbook pause`). Null or false = never pause. The
+    /// eligibility gate is vanilla's own handbook rule: a true singleplayer session that
+    /// was not opened to LAN. Multiplayer is structurally untouched.</summary>
+    public Func<bool>? PauseOnOpenPref;
+
+    /// <summary>Raised with true on open and false on close. The mod system forwards it
+    /// to the server, which stamps the watched attribute the in-hands book renders from.</summary>
+    public Action<bool>? OnReadingChanged;
+
+    /// <summary>True only while a pause THIS dialog issued is outstanding. Close never
+    /// unpauses a pause it did not create (an already-paused game stays paused), and a
+    /// preference flipped mid-read cannot strand the game paused: ownership, not the
+    /// preference, is re-checked at close.</summary>
+    private bool pausedByBook;
+
+    private bool PauseEligible => capi.IsSinglePlayer && !capi.OpenedToLan && PauseOnOpenPref?.Invoke() == true;
+
+    /// <summary>Live flip from `.almbook pause on|off` while the book is open, so the
+    /// command answers immediately instead of on the next open.</summary>
+    public void ApplyPauseNow(bool pause)
+    {
+        if (!IsOpened() || !capi.IsSinglePlayer || capi.OpenedToLan) return;
+        if (pause && !capi.IsGamePaused) { capi.PauseGame(true); pausedByBook = true; }
+        else if (!pause && pausedByBook) { capi.PauseGame(false); pausedByBook = false; }
+    }
+
     /// <summary>
     /// Physical-mode bridge. When set and Active, the flat screen
     /// draw is suppressed — PhysicalBookView captures this dialog into an
@@ -335,6 +362,11 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     public override void OnGuiOpened()
     {
         base.OnGuiOpened();
+        // The reading pause (requested by a beta reader: "I don't want to read the days
+        // away"). Vanilla handbook precedent, but with ownership: only a pause this open
+        // created is released at close.
+        if (PauseEligible && !capi.IsGamePaused) { capi.PauseGame(true); pausedByBook = true; }
+        OnReadingChanged?.Invoke(true);
         WarnOverviewConflictOnce();
         current ??= library.Default;
         // Rebuild the knowledge- and climate-dependent views on each open: the player
@@ -1490,6 +1522,14 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     {
         if (InPhysicalMode && !PhysicalMirror!.StowComplete)
         {
+            // Release the reading pause as the stow BEGINS, not when the dialog finally
+            // closes. Two reasons. Feel: the stow is already "done reading", so the world
+            // resuming under the fold-shut is right. Correctness: the stow's real close
+            // arrives via a game-time RegisterCallback, and game callbacks do not run
+            // while paused — the stow would land, the callback would freeze, and the
+            // renderer's draw-out branch would march openT straight back up: the book
+            // sprang visibly back open (found in play, 2026-07-31).
+            if (pausedByBook) { capi.PauseGame(false); pausedByBook = false; }
             PhysicalMirror.RequestClose();
             return false;
         }
@@ -1509,6 +1549,8 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
 
     public override void OnGuiClosed()
     {
+        if (pausedByBook) { capi.PauseGame(false); pausedByBook = false; }
+        OnReadingChanged?.Invoke(false);
         if (journalDirty) SaveJournal();
         frameSurface?.Dispose();
         frameSurface = null;

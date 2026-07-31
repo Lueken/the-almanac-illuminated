@@ -20,3 +20,15 @@ public class HomebaseResponse
     [ProtoMember(3)] public int Z;
     [ProtoMember(4)] public bool BedSpawn;
 }
+
+/// <summary>
+/// Client tells the server it opened or closed the Almanac. The server stamps the
+/// player entity's watched attributes, which broadcast to every client, so anyone
+/// nearby sees the reader holding the open book (ReadingHands renders it). The
+/// flag is server-cleared on join so a crash mid-read cannot strand it.
+/// </summary>
+[ProtoContract]
+public class ReadingState
+{
+    [ProtoMember(1)] public bool Reading;
+}

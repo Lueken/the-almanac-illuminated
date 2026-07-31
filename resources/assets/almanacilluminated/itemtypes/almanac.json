@@ -1,0 +1,33 @@
+{
+	"code": "almanac",
+	"class": "Item",
+	"maxstacksize": 1,
+	"attributes": {
+		"handbook": { "exclude": true }
+	},
+	"shape": { "base": "almanacilluminated:book-open" },
+	"textures": {
+		"cover": { "base": "almanacilluminated:shape/book/cover" },
+		"pages": { "base": "almanacilluminated:shape/book/pages" },
+		"paper": { "base": "almanacilluminated:shape/book/paper" },
+		"scrap": { "base": "almanacilluminated:shape/book/scrap-cream" }
+	},
+	"tpHandTransform": {
+		"translation": { "x": -0.85, "y": 0.02, "z": -0.5 },
+		"rotation": { "x": -25, "y": -90, "z": 5 },
+		"origin": { "x": 0.5, "y": 0, "z": 0.5 },
+		"scale": 0.38
+	},
+	"guiTransform": {
+		"translation": { "x": 0, "y": 0, "z": 0 },
+		"rotation": { "x": -60, "y": 25, "z": 0 },
+		"origin": { "x": 0.5, "y": 0, "z": 0.5 },
+		"scale": 1.2
+	},
+	"groundTransform": {
+		"translation": { "x": 0, "y": 0, "z": 0 },
+		"rotation": { "x": 0, "y": 0, "z": 0 },
+		"origin": { "x": 0.5, "y": 0, "z": 0.5 },
+		"scale": 1.5
+	}
+}
