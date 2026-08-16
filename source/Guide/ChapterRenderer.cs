@@ -91,9 +91,32 @@ public static class ChapterRenderer
         var atoms = new List<Atom>();
         var revealHost = capi.ModLoader.GetModSystem<AlmanacIlluminatedModSystem>();
 
+        // Completion probe for `doneWhen` and `whenChapterComplete`. Strict, not
+        // degrade-open: an unregistered namespace means unearned. Without a host at
+        // all, nothing can have been earned either.
+        System.Func<string, bool> earned = revealHost != null ? revealHost.IsEarned : _ => false;
+
+        // Every reveal key this chapter hangs on, chapter-level and section-level.
+        // Computed once per render and only when a section asks for it.
+        bool? chapterComplete = null;
+        bool ChapterComplete()
+        {
+            if (chapterComplete.HasValue) return chapterComplete.Value;
+            bool all = true;
+            foreach (string key in ChapterRevealKeys(pack))
+                if (!earned(key)) { all = false; break; }
+            chapterComplete = all;
+            return all;
+        }
+
         for (int si = 0; si < pack.Sections.Count; si++)
         {
             var sec = pack.Sections[si];
+
+            // An unfinished chapter hides this section outright, before the reveal
+            // check below, because showing nothing is the stronger of the two rules.
+            if (sec.WhenChapterComplete && !ChapterComplete()) continue;
+
             var title = new List<RichTextComponentBase>();
             string? secTitle = GuideLibrary.Localize(sec.Title);
             if (!string.IsNullOrEmpty(secTitle))
@@ -122,7 +145,7 @@ public static class ChapterRenderer
             {
                 if (!Gated(capi, block)) continue;
                 var bl = new List<RichTextComponentBase>();
-                RenderBlock(capi, block, bl, body, italic, dropCap, library, onLink, initial, accent);
+                RenderBlock(capi, block, bl, body, italic, dropCap, library, onLink, initial, accent, earned);
                 if (bl.Count > 0) blockLists.Add(bl);
             }
 
@@ -251,6 +274,44 @@ public static class ChapterRenderer
         return "A";
     }
 
+    /// <summary>
+    /// Every reveal key a chapter hangs on: its own `revealedBy` plus each section's.
+    /// Distinct, so a key three sections share is asked about once. This is the set
+    /// `whenChapterComplete` measures the chapter against.
+    /// </summary>
+    /// <summary>
+    /// Every `doneWhen` key the chapter's quest items hang on. Distinct. These decide
+    /// checkbox state, so a cache that does not stamp them serves a stale tick after a
+    /// live earn: the exact bug reported on 2026-08-08 against is-roast-collected.
+    /// Separate from <see cref="ChapterRevealKeys"/> because the two are probed
+    /// differently, reveals degrading open and completion degrading closed.
+    /// </summary>
+    public static IEnumerable<string> ChapterDoneWhenKeys(GuidePack pack)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var sec in pack.Sections)
+            foreach (var block in sec.Blocks)
+            {
+                if (!string.Equals(block.Type, "quest", StringComparison.OrdinalIgnoreCase)) continue;
+                foreach (var it in Arr(block, "items"))
+                {
+                    if (it is not JObject item) continue;
+                    string? key = item["doneWhen"]?.ToString();
+                    if (!string.IsNullOrEmpty(key)) keys.Add(key!);
+                }
+            }
+        return keys;
+    }
+
+    private static IEnumerable<string> ChapterRevealKeys(GuidePack pack)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrEmpty(pack.RevealedBy)) keys.Add(pack.RevealedBy!);
+        foreach (var sec in pack.Sections)
+            if (!string.IsNullOrEmpty(sec.RevealedBy)) keys.Add(sec.RevealedBy!);
+        return keys;
+    }
+
     private static bool Gated(ICoreClientAPI capi, GuideBlock block)
     {
         if (block.Requires == null) return true;
@@ -260,7 +321,8 @@ public static class ChapterRenderer
     }
 
     private static void RenderBlock(ICoreClientAPI capi, GuideBlock block, List<RichTextComponentBase> comps,
-        CairoFont body, CairoFont italic, CairoFont dropCap, GuideLibrary library, Action<LinkTextComponent>? onLink, string authorInitial, double[] accent)
+        CairoFont body, CairoFont italic, CairoFont dropCap, GuideLibrary library, Action<LinkTextComponent>? onLink, string authorInitial, double[] accent,
+        System.Func<string, bool> earned)
     {
         switch (block.Type)
         {
@@ -362,8 +424,25 @@ public static class ChapterRenderer
                 foreach (var it in Arr(block, "items"))
                 {
                     bool done = it["done"]?.Type == JTokenType.Boolean && it["done"]!.Value<bool>();
+
+                    // `doneWhen` ticks the box off live, from the same providers the
+                    // reveals read. Strict, unlike a reveal: an item nobody can report
+                    // on stays OPEN. A checklist that ticks itself for a mod that is not
+                    // even loaded tells the reader they have done something they have not.
+                    if (!done)
+                    {
+                        string? doneWhen = it["doneWhen"]?.ToString();
+                        if (!string.IsNullOrEmpty(doneWhen)) done = earned(doneWhen!);
+                    }
+                    // NOT the Unicode ballot boxes. The body face is Lora, and Lora has no
+                    // glyph for U+2610, U+2611 or U+2713: all three come out as .notdef,
+                    // byte-identical to a private-use codepoint (checked against
+                    // Lora-Italic.ttf, 2026-08-09). So "checked" and "unchecked" drew the
+                    // SAME hollow box and the only difference left was the ink shade, which
+                    // is what the reader reported not being able to see. Brackets and U+00D7
+                    // are in the font, so the mark is now unmistakable on its own.
                     comps.Add(new RichTextComponent(capi,
-                        "  " + (done ? "☑ " : "☐ ") + (it["text"]?.ToString() ?? "") + "\n",
+                        "  " + (done ? "[×] " : "[ ] ") + (it["text"]?.ToString() ?? "") + "\n",
                         done ? doneFont : italic));
                 }
                 break;

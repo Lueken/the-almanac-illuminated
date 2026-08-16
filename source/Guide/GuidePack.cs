@@ -80,6 +80,18 @@ public class GuideSection
     /// back to the shipped default. Runs through the '#langkey' convention.</summary>
     public string? Hint;
 
+    /// <summary>Renders this section ONLY once every reveal key the chapter references
+    /// (its own `revealedBy` and every section's) reports earned. Unlike `revealedBy`,
+    /// an incomplete chapter shows nothing at all here: no title, no hint line. This is
+    /// the closing word, the afterword that should not exist while the road is still
+    /// being walked, so it must not advertise itself the way a waiting page does.
+    ///
+    /// Completion does NOT degrade open. A key whose namespace has no registered
+    /// provider counts as unearned, so an absent mod hides the afterword rather than
+    /// declaring its road finished. A chapter that references no reveal keys at all is
+    /// vacuously complete, and the section always renders.</summary>
+    public bool WhenChapterComplete;
+
     public List<GuideBlock> Blocks = new();
 }
 

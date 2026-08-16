@@ -62,6 +62,17 @@ public interface IPhysicalMirror
     /// when no capture exists yet (caller falls back to an instant swap).
     /// </summary>
     bool BeginPageTurn(bool forward);
+
+    /// <summary>
+    /// Starts a leafing-through animation for a jump of more than one spread: a
+    /// rapid series of shortened bent turns that accelerates in, decelerates out,
+    /// and lands on the target with one full turn. `spreads` is the distance in
+    /// the current ordering; the flip count is derived from it and capped, because
+    /// leafing is an impression, not a literal per-page playback. Returns false
+    /// when no capture exists yet, and the caller simply gets the instant swap it
+    /// would have had anyway.
+    /// </summary>
+    bool BeginFlipThrough(bool forward, int spreads);
 }
 
 /// <summary>
@@ -105,13 +116,77 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     private FrameBufferRef? snapFbo;
     private int snapColorTexId;
     private int snapW, snapH;
-    private MeshRef? sheetRightRef, sheetLeftRef, copyQuadRef;
-    private readonly float[] lastUvSheet = new float[4];
+    // The sheet is a BENT strip, not a rigid quad: a grid of unshared quads whose
+    // vertices are rebuilt every frame from an arc-length-preserving bend curve
+    // (see BuildBentSheet). Unshared vertices are what let the strip be split at
+    // the column where the paper passes vertical, so the near half can draw the
+    // outgoing page and the far half the incoming one in the same frame.
+    private MeshRef? sheetStripRef, copyQuadRef;
+    private MeshData? sheetStrip;
+    private readonly int[] stripStart = new int[1];
+    private readonly int[] stripSize = new int[1];
     private bool turning, turnForward;
     private float turnT;
     private const float TurnSeconds = 0.42f;
-    private readonly float[] sheetM = Mat4f.Create();
-    private readonly float[] sheetF = Mat4f.Create();
+
+    /// <summary>Columns along the page (spine to free edge). Each column is one quad row
+    /// tall per <see cref="TurnRows"/> band. Sixteen reads as a smooth curl at the size the
+    /// book actually occupies on screen; the cost is 128 vertices rebuilt per frame, only
+    /// while a turn is in flight.</summary>
+    private const int TurnSegments = 16;
+
+    /// <summary>Bands up the page. Three is the minimum that lets the free corners curl
+    /// harder than the mid-height, which is the flex a held sheet actually shows.</summary>
+    private const int TurnRows = 3;
+
+    // Bend feel. All four are live knobs (.almbook bend|stiff|lead|corner) and all four
+    // defaults below were set by Jeffrey tuning them in game on 2026-08-09, not derived.
+    /// <summary>Peak extra tangent rotation from spine to free edge, radians. 0 restores the
+    /// old rigid sheet exactly.</summary>
+    public float BendMax = 1.5f;
+    /// <summary>How the curl distributes along the page. Above 1 holds the root stiff and throws
+    /// the bend at the free edge; below 1 does the opposite, bending hardest just off the spine
+    /// and letting the rest of the sheet run straighter. The shipped 0.7 is the second, which in
+    /// game reads as a page lifting from its binding rather than a tube unrolling.</summary>
+    public float BendStiff = 0.7f;
+    /// <summary>Where in the turn the curl peaks. Below 1 peaks early, so the page curls as it
+    /// lifts and has relaxed by the time it lands.</summary>
+    public float BendLead = 0.6f;
+    /// <summary>Extra curl at the top and bottom edges relative to mid-height. Zero gives a
+    /// pure cylinder.</summary>
+    public float BendCorner = 0.05f;
+
+    // Flip-through: a jump of more than one spread leafs through the book instead of
+    // turning a single page. Intermediate sheets swing at constant speed (continuous
+    // whipping, not a series of settled turns) and curl harder for the speed. Every
+    // value here is a live knob, because the cadence is the part of this that has to be
+    // felt rather than reasoned about.
+    /// <summary>Seconds for the slowest sheet in a series (the first and last of the run-up).</summary>
+    public float FlipSlow = 0.13f;
+    /// <summary>Seconds for the quickest sheet, at the middle of the series.</summary>
+    public float FlipFast = 0.06f;
+    /// <summary>Curl multiplier on a mid-series sheet. Fast paper curls harder.</summary>
+    public float FlipCurl = 1.35f;
+    /// <summary>Sheets added per spread of distance. The count is 2 + spreads * this, capped.</summary>
+    public float FlipScale = 0.6f;
+    /// <summary>Ceiling on the sheets in one series, landing turn included.</summary>
+    public int FlipMax = 7;
+    /// <summary>Draw mid-series sheets as blank parchment rather than real page pixels. The
+    /// fallback if real content strobes instead of reading as leafing.</summary>
+    public bool FlipPaper;
+
+    private const int FlipCountMin = 3;
+    private int flipsLeft;          // sheets still to whip past before the landing turn
+    private int flipsTotal;         // for the accelerate-in / decelerate-out cadence
+    private float turnSeconds = TurnSeconds;   // duration of the swing in flight
+
+    /// <summary>A blank sheet for the mid-series flips. Not an invented colour: it is the
+    /// dominant tone of textures/shape/book/paper.png, the same sampled value ScrapBookmark
+    /// carries at the middle of its Parchment ramp. Four texels of one colour, uploaded down
+    /// the same 0xAARRGGBB path the bookmark faces already use, so the flat sheet needs no
+    /// assumption about what the gui shader does with an untextured draw.</summary>
+    private LoadedTexture? paperTex;
+    private const int PaperFill = unchecked((int)0xFFEEE5CD);
 
     // Dialog-space capture rect (screen px), stored each render frame for remap.
     private float cropX, cropY, cropW, cropH;
@@ -157,6 +232,65 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     public const float SideTabAOuter = 1.12f;
     public const float SideTabHalfB = 0.052f;
 
+    /// <summary>How far a named BOOKMARK reaches past the page edge. A letter slip stops at
+    /// <see cref="SideTabAOuter"/>, which is a thumb-index tab and wants no more; a bookmark
+    /// is a scrap shoved in to hold a place, and reaching out is how it earns room to carry
+    /// a real name at full size instead of an abbreviation. Shared with the dialog, which
+    /// hit-tests the two lengths apart.</summary>
+    public const float NamedTabAOuter = 1.30f;
+
+    private const float NamedTabHalfA = (NamedTabAOuter - SideTabAInner) / 2f;
+    private const float NamedTabCenterA = (NamedTabAOuter + SideTabAInner) / 2f;
+
+    /// <summary>Half-length the label may occupy on a bookmark, leaving the torn end and the
+    /// tucked edge clear. Nearly three times what a letter slip could offer, which is what
+    /// puts every name in the book back at full size.</summary>
+    private const float NamedLabelMaxHalfA = 0.150f;
+
+    /// <summary>Texel rows down a bookmark. The length follows from the tab's real aspect, so
+    /// the texels stay square whatever the page is.</summary>
+    private const int ScrapTexelsHigh = 12;
+
+    /// <summary>Block half-heights for a two-line name: full size, and the floor it may shrink
+    /// to. Both stay inside <see cref="SideTabHalfB"/> so a wrapped name cannot spill into the
+    /// row above or below.</summary>
+    private const float NamedLabelTwoLineHalfB = 0.046f;
+    private const float NamedLabelTwoLineFloor = 0.040f;
+
+    private static readonly Vec4f ScrapIdleTint = new(0.9f, 0.9f, 0.9f, 1f);
+
+    // The hanging pin tags at the top edge. Their generated face uses the same grid as
+    // the side bookmarks, sized so the texels come out square on a tag that is wider
+    // than it is long: length over width in real units is 0.176 / (0.170 * page aspect).
+    // A labelled pin is a RIBBON draped over the top edge, not a stubby tag: longer than
+    // it is wide, hanging DOWN with its torn end at the foot, lapping just over the page
+    // edge at b = 1. Drawn as ONE object. The modelled slip is not drawn underneath it at
+    // all, because tinting that slip and covering its face left the part that stuck out
+    // reading as a bare detached quad.
+    private const float PinRibbonHalfW = 0.055f;
+    private const float PinRibbonHalfLen = 0.160f;
+
+    // Centre chosen so the ribbon DRAPES rather than towers. The page top is b = 1, and a
+    // bookmark shows only a tongue above the edge with the body lying on the page: here
+    // 0.12 above and 0.20 below. Centring at 1.140 instead put the head at b = 1.300, a
+    // third of a half-page ABOVE the paper, and with only about 8% of screen height above
+    // the book that ran off the top of the screen and read as a detached object floating
+    // in the corner (reported 2026-08-09). Nothing about the anchoring was wrong; the
+    // ribbon was simply reaching somewhere the screen does not go.
+    private const float PinRibbonCenterB = 0.960f;
+
+    // Grid sized so the texels come out square: length over width in real units is
+    // (2 * HalfLen) / (2 * HalfW * page aspect), which is close to two to one.
+    private const int PinRibbonTexelsLong = 27;
+    private const int PinRibbonTexelsWide = 14;
+
+    /// <summary>How far the label keeps clear of the ribbon's ends, in ribbon half-lengths.
+    /// The foot is torn, so the name must not run into it.</summary>
+    private const float PinRibbonLabelInset = 0.030f;
+
+    private static Vec4f ToVec4(double[] rgba)
+        => new((float)rgba[0], (float)rgba[1], (float)rgba[2], (float)rgba[3]);
+
     /// <summary>Row slots down one page edge, from SideTabRow0 to roughly its mirror
     /// at the foot. The bottom-anchored group hangs off the last of these.</summary>
     public const int SideTabRowCount = 15;
@@ -199,55 +333,247 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     // horizontal text textures run along the tab's length.
     private MeshRef? labelQuadRef, labelQuadHRef;
     private readonly Dictionary<string, LoadedTexture> labelTextures = new();
+    private readonly Dictionary<string, string> fittedTabLabels = new();
     private CairoFont? labelFont;
 
-    private LoadedTexture GetLabelTexture(string label, bool wrap = false)
+    /// <summary>
+    /// The label face, built on first use. Sturdy bold sans in cream with a dark
+    /// outline: the tabs are mid-tone colors, so dark ink mudded out and a fine
+    /// serif fell apart at tab size (in-game review 2026-07-28).
+    /// </summary>
+    private CairoFont LabelFont => labelFont ??= CairoFont.WhiteSmallText()
+        .WithFontSize(28)
+        .WithWeight(Cairo.FontWeight.Bold)
+        .WithColor(new[] { 0.95, 0.91, 0.80, 1.0 })
+        .WithStroke(new[] { 0.18, 0.12, 0.07, 1.0 }, 2.5);
+
+    // Label geometry on a side tab, in isotropic page units: the nominal glyph
+    // half-height, the floor it may shrink to, and the greatest half-length a
+    // label may reach along the tab before it overruns the slip. The floor is
+    // 11/15 of nominal, which is the flat ribbon's 15-to-11 point floor
+    // (GuiElementChapterTabs.LabelFloorSize) expressed in this renderer's units.
+    private const float SideTabLabelHalfB = 0.030f;
+    private const float SideTabLabelHalfBFloor = 0.022f;
+    private const float SideTabLabelMaxHalfA = 0.055f;
+
+    /// <summary>
+    /// The label as it can be drawn on a side tab without overrunning the slip or
+    /// shrinking past the readable floor. Same rule as the flat ribbon: glyphs give
+    /// way first, and only a title that still will not fit at the floor is clipped
+    /// with one ellipsis. Here the "font size" is the quad's half-height, so the
+    /// constraint lands on the label texture's aspect rather than on a point size.
+    /// </summary>
+    private string FitSideTabLabel(string label, float pageAspect)
+        // Widest texture aspect that still sits inside maxHalfA once the glyphs have
+        // shrunk all the way to the floor. The 3% margin absorbs any drift between
+        // PredictAspect and the texture GenTextTexture actually hands back.
+        => ClipToAspect(label, SideTabLabelMaxHalfA * pageAspect / SideTabLabelHalfBFloor * 0.97);
+
+    /// <summary>What a bookmark's label reads as, and the block sizes its scale search may
+    /// use. A wrapped name needs a taller block and a different floor, so the two travel
+    /// together rather than being rediscovered at the draw site.</summary>
+    private readonly struct NamedFit
     {
-        string key = (wrap ? "w|" : "s|") + label;
-        if (labelTextures.TryGetValue(key, out var tex)) return tex;
-        // Sturdy bold sans in cream with a dark outline: the tabs are mid-tone
-        // colors, so dark ink mudded out and a fine serif fell apart at tab
-        // size (in-game review 2026-07-28).
-        labelFont ??= CairoFont.WhiteSmallText()
+        public readonly string Text;
+        public readonly float NominalHalfB, FloorHalfB;
+        public NamedFit(string text, float nominal, float floor) { Text = text; NominalHalfB = nominal; FloorHalfB = floor; }
+    }
+
+    /// <summary>
+    /// Fits a name to a bookmark, in the order the design calls for: full size on one line,
+    /// which is what a bookmark this long gives every name in the book today; then wrapped
+    /// to two lines; and only if a name defeats both, clipped. The scale search at the draw
+    /// site does the shrinking between those rungs.
+    /// </summary>
+    private NamedFit FitNamedLabel(string label, float pageAspect)
+    {
+        double singleBudget = NamedLabelMaxHalfA * pageAspect / SideTabLabelHalfBFloor * 0.97;
+        if (PredictAspect(label) <= singleBudget)
+            return new NamedFit(label, SideTabLabelHalfB, SideTabLabelHalfBFloor);
+
+        var (head, tail) = SplitTwo(label);
+        if (tail != null)
+        {
+            double twoBudget = NamedLabelMaxHalfA * pageAspect / NamedLabelTwoLineFloor * 0.97;
+            if (PredictAspectTwoLine(head, tail) <= twoBudget)
+                return new NamedFit(head + "\n" + tail, NamedLabelTwoLineHalfB, NamedLabelTwoLineFloor);
+        }
+
+        return new NamedFit(ClipToAspect(label, singleBudget), SideTabLabelHalfB, SideTabLabelHalfBFloor);
+    }
+
+    /// <summary>Drops characters off the end until the label's predicted texture fits the
+    /// aspect budget. Cached, because it runs per tab per frame otherwise.</summary>
+    private string ClipToAspect(string label, double budget)
+    {
+        string key = label + "|" + (int)(budget * 100);
+        if (fittedTabLabels.TryGetValue(key, out var cached)) return cached;
+
+        string shown = label;
+        if (PredictAspect(label) > budget)
+        {
+            shown = "…";
+            for (int len = label.Length - 1; len > 0; len--)
+            {
+                string trial = label.Substring(0, len).TrimEnd() + "…";
+                if (PredictAspect(trial) <= budget) { shown = trial; break; }
+            }
+        }
+        fittedTabLabels[key] = shown;
+        return shown;
+    }
+
+    /// <summary>Splits a name at the space nearest its middle, so "Smelter's Yard" breaks
+    /// as "Smelter's" over "Yard". A name with no space cannot wrap and says so.</summary>
+    private static (string head, string? tail) SplitTwo(string label)
+    {
+        int mid = label.Length / 2, best = -1;
+        for (int i = 1; i < label.Length - 1; i++)
+            if (label[i] == ' ' && (best < 0 || Math.Abs(i - mid) < Math.Abs(best - mid))) best = i;
+        return best < 0 ? (label, null) : (label.Substring(0, best), label.Substring(best + 1));
+    }
+
+    /// <summary>
+    /// The aspect (width over height) of the texture GenTextTexture would build for
+    /// this text in the label font. Mirrors TextTextureUtil.GenOrUpdateTextTexture:
+    /// the box comes from the font's own extents, plus the padding it adds on every
+    /// side for a stroked font. Only ever used to choose where to clip a title. The
+    /// drawn scale below still comes off the real texture, so drift here costs a
+    /// character, never a broken layout.
+    /// </summary>
+    private double PredictAspect(string text)
+    {
+        double s = Vintagestory.API.Config.RuntimeEnv.GUIScale <= 0 ? 1 : Vintagestory.API.Config.RuntimeEnv.GUIScale;
+        double pad = Math.Ceiling(LabelFont.StrokeWidth);
+        double w = LabelFont.GetTextExtents(text).Width + s * (2 + 2 * pad);
+        double h = LabelFont.GetFontExtents().Height + s * (1 + 2 * pad);
+        return h <= 0 ? 1 : w / h;
+    }
+
+    /// <summary>
+    /// The same prediction for a two-line label. GetLabelTexture sizes a multi-line texture
+    /// from the widest line and the line height with its own fixed padding, not through
+    /// AutoBoxSize, so this mirrors that branch instead of the single-line one.
+    /// </summary>
+    private double PredictAspectTwoLine(string a, string b)
+    {
+        double maxW = Math.Max(LabelFont.GetTextExtents(a).Width, LabelFont.GetTextExtents(b).Width);
+        double lineH = LabelFont.GetFontExtents().Height;
+        double w = (int)maxW + 12;
+        double h = (int)(lineH * 2) + 8;
+        return h <= 0 ? 1 : w / h;
+    }
+
+    // One generated bookmark face per label, side and texel length. Small textures,
+    // built once, nearest-filtered so the texels stay square-edged on the tilted page.
+    private readonly Dictionary<string, LoadedTexture> scrapTextures = new();
+    private readonly Dictionary<ScrapMaterial, CairoFont> scrapFonts = new();
+
+    /// <summary>
+    /// The bookmark face for this label on this side, uploaded as pixel art. The grid
+    /// length follows the tab's real on-screen aspect so the texels come out square, and
+    /// the free (torn) end faces away from the book on whichever side it hangs.
+    /// </summary>
+    private LoadedTexture ScrapTexture(string label, ScrapSkin skin, bool leftSide)
+    {
+        // The label belongs in the key. Two chapters that drew the same material at the
+        // same size are still two different scraps, and keying on the material alone
+        // handed the second one the first one's tear.
+        string key = label + "|" + skin.Width + "x" + skin.Height + (leftSide ? "|L" : "|R");
+        if (scrapTextures.TryGetValue(key, out var hit)) return hit;
+
+        // The grid is already 0xAARRGGBB, which on a little-endian int array is the byte
+        // order GL_BGRA wants, so it uploads as-is. linearMag off is the whole point:
+        // a smoothed bookmark would be the one thing that gives the pixel art away.
+        var tex = new LoadedTexture(capi, 0, skin.Width, skin.Height);
+        capi.Render.LoadOrUpdateTextureFromBgra(skin.Argb, false, 0, ref tex);
+        scrapTextures[key] = tex;
+        return tex;
+    }
+
+    /// <summary>The label face for a bookmark: dark ink on the pale materials, cream on
+    /// leather, each stroked with the other end of its own ramp so the name holds up at
+    /// tab size against a mottled ground.</summary>
+    private CairoFont ScrapFont(ScrapSkin skin)
+    {
+        if (scrapFonts.TryGetValue(skin.Material, out var hit)) return hit;
+        var font = CairoFont.WhiteSmallText()
             .WithFontSize(28)
             .WithWeight(Cairo.FontWeight.Bold)
-            .WithColor(new[] { 0.95, 0.91, 0.80, 1.0 })
-            .WithStroke(new[] { 0.18, 0.12, 0.07, 1.0 }, 2.5);
+            .WithColor(skin.Ink)
+            .WithStroke(skin.InkStroke, 2.5);
+        scrapFonts[skin.Material] = font;
+        return font;
+    }
 
-        // Bookmarks wrap to two lines (two columns once rotated onto the tab)
-        // so long titles keep readable glyphs instead of shrinking to fit.
-        string shown = wrap ? WrapTwoLines(label, 10)
-            : label.Length > 14 ? label.Substring(0, 13) + "…" : label;
+    private LoadedTexture GetLabelTexture(string label, bool wrap = false, ScrapSkin? skin = null)
+    {
+        string key = (wrap ? "w|" : "s|") + (skin == null ? "" : skin.Material + "|") + label;
+        if (labelTextures.TryGetValue(key, out var tex)) return tex;
+        var font = skin == null ? LabelFont : ScrapFont(skin);
+
+        // Every caller now fits its own text before asking for a texture: side tabs
+        // through FitSideTabLabel or FitNamedLabel, pin tags through FitPinLabel, which
+        // is also what puts the newline in a wrapped one. The text is taken as given
+        // here; `wrap` survives only to keep the two callers' cache entries apart.
+        string shown = label;
 
         if (shown.Contains('\n'))
         {
             var lines = shown.Split('\n');
             double maxW = 0;
-            foreach (var l in lines) maxW = Math.Max(maxW, labelFont.GetTextExtents(l).Width);
-            double lineH = labelFont.GetFontExtents().Height;
-            tex = capi.Gui.TextTexture.GenTextTexture(shown, labelFont,
+            foreach (var l in lines) maxW = Math.Max(maxW, font.GetTextExtents(l).Width);
+            double lineH = font.GetFontExtents().Height;
+            tex = capi.Gui.TextTexture.GenTextTexture(shown, font,
                 (int)maxW + 12, (int)(lineH * lines.Length) + 8, null, EnumTextOrientation.Center);
         }
         else
         {
-            tex = capi.Gui.TextTexture.GenTextTexture(shown, labelFont);
+            tex = capi.Gui.TextTexture.GenTextTexture(shown, font);
         }
         labelTextures[key] = tex;
         return tex;
     }
 
-    private static string WrapTwoLines(string s, int maxLine)
+    /// <summary>Narrowest the label may get across a hanging pin tag before it stops being
+    /// readable. The budget below is this floor read backwards into a texture aspect.</summary>
+    private const float PinLabelFloorHalfW = 0.020f;
+
+    /// <summary>
+    /// A pin tag's name, wrapped to two lines (two columns once rotated onto the tag) so a
+    /// long title keeps readable glyphs instead of thinning to fit. Truncation is the LAST
+    /// step, not the first: the old rule cut every name past thirteen characters whether or
+    /// not it would have fitted, which is the same mistake the side tabs had.
+    /// </summary>
+    private string FitPinLabel(string label, float pageAspect)
     {
-        if (s.Length <= maxLine) return s;
-        int mid = s.Length / 2, best = -1;
-        for (int i = 1; i < s.Length - 1; i++)
+        // Widest texture the tag can carry before the label thins past the floor:
+        // halfW = halfLen * (texH / texW) / pageAspect, solved for texW / texH.
+        double budget = (PinRibbonHalfLen - PinRibbonLabelInset) / (PinLabelFloorHalfW * pageAspect) * 0.97;
+
+        var (head, tail) = SplitTwo(label);
+        if (tail == null) return ClipToAspect(label, budget);   // one word, nothing to wrap
+        if (PredictAspectTwoLine(head, tail) <= budget) return head + "\n" + tail;
+
+        // Wrapped and still too wide. Shorten whichever line is the long one, so the
+        // name loses its tail rather than its beginning.
+        string a = head, b = tail;
+        for (int guard = 0; guard < 64 && PredictAspectTwoLine(a, b) > budget; guard++)
         {
-            if (s[i] == ' ' && (best == -1 || Math.Abs(i - mid) < Math.Abs(best - mid))) best = i;
+            if (LabelFont.GetTextExtents(a).Width >= LabelFont.GetTextExtents(b).Width)
+                a = Shorten(a);
+            else b = Shorten(b);
+            if (a.Length <= 1 && b.Length <= 1) break;
         }
-        if (best <= 0) return s.Length > 14 ? s.Substring(0, 13) + "…" : s;
-        string l2 = s.Substring(best + 1);
-        if (l2.Length > 13) l2 = l2.Substring(0, 12) + "…";
-        return s.Substring(0, best) + "\n" + l2;
+        return a + "\n" + b;
+    }
+
+    /// <summary>Drops one character and marks the cut, keeping a single ellipsis.</summary>
+    private static string Shorten(string s)
+    {
+        string bare = s.EndsWith("…") ? s.Substring(0, s.Length - 1) : s;
+        if (bare.Length <= 1) return "…";
+        return bare.Substring(0, bare.Length - 1).TrimEnd() + "…";
     }
 
     // Knobs. Defaults = Jeffrey's approved envelope (2026-07-28 rounds).
@@ -348,10 +674,13 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
         labelMesh.AddIndex(0); labelMesh.AddIndex(2); labelMesh.AddIndex(3);
         labelQuadRef = capi.Render.UploadMesh(labelMesh);
 
-        // Page-turn sheet halves (own UV state so the underneath quads keep theirs)
-        // and the 1:1 copy quad (identity UV orientation for FBO->FBO blits).
-        sheetRightRef = capi.Render.UploadMesh(BuildQuad(0f, 1f, 0.5f, 0f, 1f, 1f));
-        sheetLeftRef = capi.Render.UploadMesh(BuildQuad(-1f, 0f, 0f, 0f, 0.5f, 1f));
+        // The page-turn sheet: one strip of unshared quads, allocated once at a
+        // fixed size and rewritten in place each frame of a turn. Vertex and index
+        // counts never change, so UpdateMesh always fits the buffer it was given.
+        sheetStrip = BuildStripTemplate();
+        sheetStripRef = capi.Render.UploadMesh(sheetStrip);
+
+        // The 1:1 copy quad (identity UV orientation for FBO->FBO blits).
         copyQuadRef = capi.Render.UploadMesh(BuildQuad(-1f, 1f, 0f, 1f, 1f, 0f));
 
         // Horizontal label quad for the side tabs (standard upright text).
@@ -404,6 +733,165 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
         capi.Render.UpdateMesh(quad, BuildQuad(x0, x1, u0, vTop, u1, vBot));
     }
 
+    // --- the bent page ----------------------------------------------------
+
+    private const int StripQuads = TurnSegments * (TurnRows - 1);
+
+    /// <summary>
+    /// The turning sheet's fixed topology: one quad per (column, band) with its own
+    /// four vertices. Nothing is shared, which costs 128 vertices and buys two things
+    /// the shared-vertex version cannot have — a UV discontinuity at the column where
+    /// the paper passes vertical (recto on one side of it, verso on the other), and a
+    /// clean index split so those two halves can be drawn with different textures.
+    /// Positions and UVs are meaningless here; every frame of a turn overwrites them.
+    /// </summary>
+    private static MeshData BuildStripTemplate()
+    {
+        var mesh = new MeshData(StripQuads * 4, StripQuads * 6,
+            withNormals: false, withUv: true, withRgba: false, withFlags: false);
+        for (int c = 0; c < TurnSegments; c++)
+        {
+            for (int b = 0; b < TurnRows - 1; b++)
+            {
+                int v = mesh.VerticesCount;
+                for (int k = 0; k < 4; k++) mesh.AddVertex(0f, 0f, 0f, 0f, 0f);
+                mesh.AddIndex(v); mesh.AddIndex(v + 1); mesh.AddIndex(v + 2);
+                mesh.AddIndex(v); mesh.AddIndex(v + 2); mesh.AddIndex(v + 3);
+            }
+        }
+        return mesh;
+    }
+
+    /// <summary>
+    /// Rewrites the sheet as a bent page and returns the column at which it passes
+    /// vertical (0 = wholly past it, <see cref="TurnSegments"/> = not yet at all).
+    ///
+    /// The model is a developable bend with vertical generators: walk the page from
+    /// the spine to the free edge in equal arc steps, turning the tangent as you go.
+    /// Arc length is therefore preserved exactly, which is the property that makes it
+    /// read as paper rather than as a stretched sheet. The tangent is
+    ///
+    ///     theta(s) = min(turnAngle + curl * s^BendStiff, pi)
+    ///
+    /// The clamp at pi is the landing page: paper cannot pass through the sheet it
+    /// is falling onto. Without it the leading tip keeps rotating past flat in the
+    /// last fifth of the swing and sinks under the page beneath it (caught by the
+    /// profile harness, where the tip reached 198 degrees at t=0.75). Clamped, the
+    /// tip simply lies down along the landing plane, which is what settling looks
+    /// like, and arc length is untouched either way.
+    ///
+    /// so the root leaves the spine at exactly the turn angle (a bound page is held
+    /// there and cannot do otherwise), the curvature grows toward the free edge, and
+    /// the tip always runs ahead of the root, which is the curl leading the turn.
+    /// `curl` is zero at both ends of the swing, so the page lands dead flat.
+    ///
+    /// Geometry comes out in real proportions (x already multiplied by the page's
+    /// true half-width), so the caller feeds it mv directly and the aspect matrix
+    /// stays out of it. Bending after an anisotropic stretch would have skewed the
+    /// curve; baking the stretch into the vertices avoids the question entirely.
+    /// </summary>
+    private int BuildBentSheet(float turnAngle, float curl, float pageHalfW, int dir,
+                               float uSpine, float uOuterFront, float uOuterBack,
+                               float vTop, float vBot)
+    {
+        var mesh = sheetStrip!;
+        float stiff = Math.Max(0.2f, BendStiff);
+        float ds = 1f / TurnSegments;
+
+        // Per-band arc walk. Row r gets its own curl so the free corners flex harder
+        // than the mid-height; at BendCorner 0 every row shares one curve and the
+        // surface is a pure cylinder.
+        Span<float> px = stackalloc float[TurnRows * (TurnSegments + 1)];
+        Span<float> pz = stackalloc float[TurnRows * (TurnSegments + 1)];
+        for (int r = 0; r < TurnRows; r++)
+        {
+            float y = TurnRows == 1 ? 0f : -1f + 2f * r / (TurnRows - 1);
+            float k = curl * (1f + BendCorner * y * y);
+            float x = 0f, z = 0f;
+            int b0 = r * (TurnSegments + 1);
+            px[b0] = 0f; pz[b0] = 0f;
+            for (int c = 0; c < TurnSegments; c++)
+            {
+                // Midpoint of the step: second-order accurate, and free here.
+                float sm = (c + 0.5f) * ds;
+                float th = MathF.Min(turnAngle + k * MathF.Pow(sm, stiff), MathF.PI);
+                x += MathF.Cos(th) * ds;
+                z += MathF.Sin(th) * ds;
+                px[b0 + c + 1] = x * pageHalfW * dir;
+                pz[b0 + c + 1] = z * pageHalfW;
+            }
+        }
+
+        // Where the mid-height row passes vertical. theta is monotone in s while curl
+        // is positive, so the first crossing is the only one. Deciding it on one row
+        // keeps the seam a straight column instead of a ragged edge.
+        float midCurl = curl;
+        int splitCol = TurnSegments;
+        for (int c = 0; c <= TurnSegments; c++)
+        {
+            float th = turnAngle + midCurl * MathF.Pow(c * ds, stiff);
+            if (th >= MathF.PI / 2f) { splitCol = c; break; }
+        }
+
+        int vi = 0;
+        for (int c = 0; c < TurnSegments; c++)
+        {
+            // A quad belongs to the face it shows: front quads ramp their u toward
+            // the outgoing page's outer edge, back quads toward the incoming one's.
+            float uOuter = c < splitCol ? uOuterFront : uOuterBack;
+            float u0 = uSpine + (uOuter - uSpine) * (c * ds);
+            float u1 = uSpine + (uOuter - uSpine) * ((c + 1) * ds);
+
+            for (int b = 0; b < TurnRows - 1; b++)
+            {
+                float y0 = -1f + 2f * b / (TurnRows - 1);
+                float y1 = -1f + 2f * (b + 1) / (TurnRows - 1);
+                float v0 = vBot + (vTop - vBot) * ((y0 + 1f) * 0.5f);
+                float v1 = vBot + (vTop - vBot) * ((y1 + 1f) * 0.5f);
+                int i0 = b * (TurnSegments + 1) + c;
+                int i1 = (b + 1) * (TurnSegments + 1) + c;
+
+                SetVertex(mesh, vi++, px[i0], y0, pz[i0], u0, v0);
+                SetVertex(mesh, vi++, px[i0 + 1], y0, pz[i0 + 1], u1, v0);
+                SetVertex(mesh, vi++, px[i1 + 1], y1, pz[i1 + 1], u1, v1);
+                SetVertex(mesh, vi++, px[i1], y1, pz[i1], u0, v1);
+            }
+        }
+
+        capi.Render.UpdateMesh(sheetStripRef!, mesh);
+        return splitCol;
+    }
+
+    private static void SetVertex(MeshData mesh, int i, float x, float y, float z, float u, float v)
+    {
+        mesh.xyz[i * 3] = x; mesh.xyz[i * 3 + 1] = y; mesh.xyz[i * 3 + 2] = z;
+        mesh.Uv[i * 2] = u; mesh.Uv[i * 2 + 1] = v;
+    }
+
+    /// <summary>How hard the sheet is curling at progress `t` through its swing. Zero at both
+    /// ends so the page leaves and lands flat; <see cref="BendLead"/> below 1 puts the peak
+    /// early, so the curl leads the turn and has relaxed by the landing.</summary>
+    private float CurlAt(float t, bool intermediate)
+    {
+        float shaped = MathF.Pow(GameMath.Clamp(t, 0f, 1f), Math.Max(0.1f, BendLead));
+        float k = BendMax * MathF.Sin(MathF.PI * shaped);
+        return intermediate ? k * FlipCurl : k;
+    }
+
+    /// <summary>The blank parchment sheet, built on first use. Uploaded exactly the way the
+    /// bookmark faces are (see ScrapTexture): the ints are 0xAARRGGBB, which on a little-endian
+    /// int array is the byte order GL wants, so the sampled value goes up untouched.</summary>
+    private int PaperTexId()
+    {
+        if (paperTex == null)
+        {
+            paperTex = new LoadedTexture(capi, 0, 2, 2);
+            capi.Render.LoadOrUpdateTextureFromBgra(
+                new[] { PaperFill, PaperFill, PaperFill, PaperFill }, false, 0, ref paperTex);
+        }
+        return paperTex.TextureId;
+    }
+
     // --- mode control -----------------------------------------------------
 
     /// <summary>Enter live mode. Call before the dialog opens so its first frame is already captured, not flat-drawn.</summary>
@@ -425,11 +913,20 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     }
 
     public string Describe() =>
-        $"tilt {TiltDeg:0.#}°, yaw {YawDeg:0.#}°, dist {Dist:0.##}, scale {Scale:0.##}, fov {FovDeg:0.#}°, height {HeightOff:0.##}";
+        $"tilt {TiltDeg:0.#}°, yaw {YawDeg:0.#}°, dist {Dist:0.##}, scale {Scale:0.##}, fov {FovDeg:0.#}°, height {HeightOff:0.##}, " +
+        $"bend {BendMax:0.##}, stiff {BendStiff:0.##}, lead {BendLead:0.##}, corner {BendCorner:0.##}, " +
+        $"flipslow {FlipSlow:0.###}, flipfast {FlipFast:0.###}, flipcurl {FlipCurl:0.##}, " +
+        $"flipscale {FlipScale:0.##}, flipmax {FlipMax}, flippaper {(FlipPaper ? 1 : 0)}" +
+        (GuiDialogIlluminatedBook.FlipThroughParked
+            ? " (leafing-through is parked, so the flip knobs set and save but do nothing)"
+            : "");
 
     public void Reset()
     {
         TiltDeg = 12f; YawDeg = 0f; Dist = 1.0f; Scale = 0.37f; FovDeg = 50f; HeightOff = 0.06f;
+        BendMax = 1.5f; BendStiff = 0.7f; BendLead = 0.6f; BendCorner = 0.05f;
+        FlipSlow = 0.13f; FlipFast = 0.06f; FlipCurl = 1.35f;
+        FlipScale = 0.6f; FlipMax = 7; FlipPaper = false;
     }
 
     // --- meshes -----------------------------------------------------------
@@ -566,6 +1063,63 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     /// </summary>
     public bool BeginPageTurn(bool forward)
     {
+        if (!SnapshotSpread()) return false;
+        turning = true;
+        turnForward = forward;
+        turnT = 0f;
+        flipsLeft = 0;
+        flipsTotal = 0;
+        turnSeconds = TurnSeconds;
+        return true;
+    }
+
+    /// <summary>
+    /// Arms the leafing-through series. The flip count is derived from the jump and
+    /// capped: past a handful of sheets a reader sees "a long way", not a count, so
+    /// playing every page would only make the wait longer without reading as more.
+    /// The last flip in the series is a full-length turn, which is what actually
+    /// lands the reader on the target spread; everything before it whips past.
+    ///
+    /// A distance of one (or an unresolvable one, which the caller passes as one)
+    /// degrades to exactly the single turn the page corners have always played.
+    /// </summary>
+    public bool BeginFlipThrough(bool forward, int spreads)
+    {
+        if (spreads <= 1) return BeginPageTurn(forward);
+        if (!SnapshotSpread()) return false;
+
+        int cap = Math.Max(2, FlipMax);
+        int count = GameMath.Clamp(2 + (int)MathF.Round(spreads * FlipScale), Math.Min(FlipCountMin, cap), cap);
+        turning = true;
+        turnForward = forward;
+        turnT = 0f;
+        flipsTotal = count;
+        flipsLeft = count - 1;          // the remainder after the landing turn
+        turnSeconds = FlipDuration(0, count);
+        return true;
+    }
+
+    /// <summary>
+    /// How long flip `i` of `n` lasts. Accelerate in, decelerate out: the series
+    /// starts and ends at the slow end and is quickest through the middle, which is
+    /// how a thumb through a book actually sounds. The final flip is the landing
+    /// turn and gets the full page-turn time so it settles rather than snapping.
+    /// </summary>
+    private float FlipDuration(int i, int n)
+    {
+        if (i >= n - 1) return TurnSeconds;
+        float q = n <= 2 ? 0.5f : (i + 0.5f) / (n - 1);
+        float bell = MathF.Sin(MathF.PI * q);
+        // Tolerate the knobs being set the wrong way round rather than running backwards.
+        float slow = Math.Max(FlipSlow, FlipFast);
+        float fast = Math.Min(FlipSlow, FlipFast);
+        return slow - (slow - fast) * bell;
+    }
+
+    /// <summary>Copies the live capture (the OLD spread) into the snap FBO. False when there
+    /// is nothing captured yet, which is the caller's cue to fall back to an instant swap.</summary>
+    private bool SnapshotSpread()
+    {
         if (!LiveActive || fbo == null || fboColorTexId == 0 || copyQuadRef == null) return false;
         EnsureSnapFbo();
         if (snapFbo == null) return false;
@@ -600,10 +1154,6 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
 
         r.CurrentFrameBuffer = prevFb;
         if (!wasActive) prog.Stop();
-
-        turning = true;
-        turnForward = forward;
-        turnT = 0f;
         return true;
     }
 
@@ -708,29 +1258,48 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
             var side = center < 0 ? mvQuadLeft : mvQuadRight;
             float sink = under ? -0.024f : 0f;
 
-            Mat4f.Identity(slotT);
-            Mat4f.Translate(slotT, slotT, center - ScrapBaseCenter, 0f, sink);
-            Mat4f.Mul(slotM, side, slotT);
-            Mat4f.Mul(slotM, slotM, modelNorm);
-            DrawMesh(scrapRef!, atlasTexId, slotM, normalShaded: 1, tint: ScrapTints[i]);
-
-            // The pinned page's name, reading down the hanging tab. The quad's
-            // cross-tab width derives from the texture aspect so glyphs keep
-            // their proportions whatever the label length.
             string label = liveDialog!.PinLabel(i);
-            if (label.Length > 0 && labelQuadRef != null)
+
+            if (label.Length == 0 || labelQuadRef == null)
             {
-                var tex = GetLabelTexture(label, wrap: true);
-                const float halfLen = 0.088f;   // down-tab, isotropic page units
-                float halfW = GameMath.Clamp(
-                    halfLen * (tex.Height / (float)Math.Max(1, tex.Width)) / (cropW / cropH),
-                    0.010f, 0.045f);
+                // An unnamed pin keeps the modelled slip and the old paper tints. It has
+                // no label to be deterministic about, and nothing to cover the slip with.
                 Mat4f.Identity(slotT);
-                Mat4f.Translate(slotT, slotT, center, 1.115f, 0.026f + sink);   // tab's hanging area, just above its face
-                Mat4f.Scale(slotT, slotT, halfW, halfLen, 1f);
+                Mat4f.Translate(slotT, slotT, center - ScrapBaseCenter, 0f, sink);
                 Mat4f.Mul(slotM, side, slotT);
-                DrawMesh(labelQuadRef, tex.TextureId, slotM, normalShaded: 0);
+                Mat4f.Mul(slotM, slotM, modelNorm);
+                DrawMesh(scrapRef!, atlasTexId, slotM, normalShaded: 1, tint: ScrapTints[i]);
+                return;
             }
+
+            // A named pin is a ribbon, and it is the WHOLE object. The modelled slip is
+            // deliberately not drawn: the previous pass tinted it and laid a smaller
+            // generated face over the top, which left the uncovered part hanging below as
+            // a bare quad. Owning the entire visual is the only way that cannot recur.
+            //
+            // labelQuadRef's UVs are rotated a quarter turn, so a scrap built lengthwise
+            // hangs DOWNWARD with its torn end at the foot, which is what a ribbon draped
+            // over a page edge looks like.
+            var skin = ScrapBookmark.Build(label, PinRibbonTexelsLong, PinRibbonTexelsWide, freeEndLeft: false);
+            Mat4f.Identity(slotT);
+            Mat4f.Translate(slotT, slotT, center, PinRibbonCenterB, 0.024f + sink);
+            Mat4f.Scale(slotT, slotT, PinRibbonHalfW, PinRibbonHalfLen, 1f);
+            Mat4f.Mul(slotM, side, slotT);
+            DrawMesh(labelQuadRef, ScrapTexture(label + "|pin", skin, false).TextureId, slotM, normalShaded: 0);
+
+            // The name reads down the ribbon. Its length is the ribbon's minus the inset
+            // that keeps it off the torn foot; its width follows the texture aspect, so
+            // glyphs keep their proportions whatever the name is.
+            var tex = GetLabelTexture(FitPinLabel(label, cropW / cropH), wrap: true, skin: skin);
+            float halfLen = PinRibbonHalfLen - PinRibbonLabelInset;
+            float halfW = GameMath.Clamp(
+                halfLen * (tex.Height / (float)Math.Max(1, tex.Width)) / (cropW / cropH),
+                0.010f, PinRibbonHalfW * 0.82f);
+            Mat4f.Identity(slotT);
+            Mat4f.Translate(slotT, slotT, center, PinRibbonCenterB, 0.026f + sink);
+            Mat4f.Scale(slotT, slotT, halfW, halfLen, 1f);
+            Mat4f.Mul(slotM, side, slotT);
+            DrawMesh(labelQuadRef, tex.TextureId, slotM, normalShaded: 0);
         }
 
         // Side chapter tabs, same layering rule as the scraps: the active tab
@@ -739,35 +1308,82 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
 
         void DrawSideTab(bool leftSide, int i, int row, string label, bool active)
         {
-            var mesh = leftSide ? tabLeftRef! : tabRightRef!;
             var sideM = leftSide ? mvQuadLeft : mvQuadRight;
             float sink = active ? 0f : -0.022f;
             float outShift = active ? (leftSide ? -0.012f : 0.012f) : 0f;
             float db = -(row * SideTabRowStep);
+            float pageAspect = cropW / cropH;
+            float sideSign = leftSide ? -1f : 1f;
 
-            Mat4f.Identity(slotT);
-            Mat4f.Translate(slotT, slotT, outShift, db, sink);
-            Mat4f.Mul(slotM, sideM, slotT);
-            Mat4f.Mul(slotM, slotM, modelNorm);
-            var tint = active ? TabTintActive : (row % 2 == 0 ? TabTintA : TabTintB);
-            DrawMesh(mesh, atlasTexId, slotM, normalShaded: 1, tint: tint);
+            // A one-character label is the thumb index and keeps the baked slip it has
+            // always had. Anything with a word on it is a BOOKMARK: a scrap of whatever
+            // the reader had to hand, reaching further out so the name fits at full size.
+            bool named = label.Length > 1;
+            ScrapSkin? skin = null;
+
+            if (named)
+            {
+                // Texels stay square by deriving the grid length from the tab's real
+                // on-screen aspect, which is its a-extent in page units times the page
+                // aspect, over its b-extent.
+                int gw = GameMath.Clamp(
+                    (int)Math.Round(ScrapTexelsHigh * (NamedTabHalfA * pageAspect / SideTabHalfB)), 8, 160);
+                skin = ScrapBookmark.Build(label, gw, ScrapTexelsHigh, freeEndLeft: leftSide);
+
+                Mat4f.Identity(slotT);
+                Mat4f.Translate(slotT, slotT, sideSign * NamedTabCenterA + outShift, SideTabRow0 + db, 0.015f + sink);
+                Mat4f.Scale(slotT, slotT, NamedTabHalfA, SideTabHalfB, 1f);
+                Mat4f.Mul(slotM, sideM, slotT);
+                DrawMesh(labelQuadHRef!, ScrapTexture(label, skin, leftSide).TextureId, slotM,
+                    normalShaded: 0, tint: active ? null : ScrapIdleTint);
+            }
+            else
+            {
+                Mat4f.Identity(slotT);
+                Mat4f.Translate(slotT, slotT, outShift, db, sink);
+                Mat4f.Mul(slotM, sideM, slotT);
+                Mat4f.Mul(slotM, slotM, modelNorm);
+                var tint = active ? TabTintActive : (row % 2 == 0 ? TabTintA : TabTintB);
+                DrawMesh(leftSide ? tabLeftRef! : tabRightRef!, atlasTexId, slotM, normalShaded: 1, tint: tint);
+            }
 
             if (label.Length > 0 && labelQuadHRef != null)
             {
-                var tex = GetLabelTexture(label);
-                // Uniform glyph height across all tabs (real-index typography);
-                // width follows the texture aspect, and over-long titles shrink
-                // to the tab instead of distorting. The first rule fixed width
-                // and stretched single letters wide, long titles thin.
-                float halfB = 0.030f;
-                float halfA = halfB * (tex.Width / (float)Math.Max(1, tex.Height)) / (cropW / cropH);
-                const float maxHalfA = 0.055f;
+                // Uniform glyph height across tabs of a kind (real-index typography);
+                // width follows the texture aspect, so a single letter is never
+                // stretched wide nor a long name squeezed thin. The shrink stops at the
+                // readable floor: anything that would have to go smaller arrived already
+                // wrapped or clipped from the fit above.
+                float nominalHalfB, floorHalfB, maxHalfA, centerA;
+                string text;
+                if (named)
+                {
+                    var fit = FitNamedLabel(label, pageAspect);
+                    text = fit.Text;
+                    nominalHalfB = fit.NominalHalfB;
+                    floorHalfB = fit.FloorHalfB;
+                    maxHalfA = NamedLabelMaxHalfA;
+                    centerA = sideSign * NamedTabCenterA + outShift;
+                }
+                else
+                {
+                    text = FitSideTabLabel(label, pageAspect);
+                    nominalHalfB = SideTabLabelHalfB;
+                    floorHalfB = SideTabLabelHalfBFloor;
+                    maxHalfA = SideTabLabelMaxHalfA;
+                    centerA = sideSign * 1.048f + outShift;
+                }
+
+                var tex = GetLabelTexture(text, wrap: false, skin: skin);
+                float halfB = nominalHalfB;
+                float halfA = halfB * (tex.Width / (float)Math.Max(1, tex.Height)) / pageAspect;
                 if (halfA > maxHalfA)
                 {
-                    halfB *= maxHalfA / halfA;
+                    // The fit above should make this a no-op; it stays as the guard
+                    // that a label can never reach past the tab carrying it.
+                    halfB = Math.Max(floorHalfB, halfB * maxHalfA / halfA);
                     halfA = maxHalfA;
                 }
-                float centerA = (leftSide ? -1.048f : 1.048f) + outShift;
                 Mat4f.Identity(slotT);
                 Mat4f.Translate(slotT, slotT, centerA, SideTabRow0 + db, 0.02f + sink);
                 Mat4f.Scale(slotT, slotT, halfA, halfB, 1f);
@@ -809,9 +1425,10 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
             UpdateQuadUv(lastUvLeft, quadLeftRef, -1f, 0f, u0, vTop, uMid, vBot);
             UpdateQuadUv(lastUvRight, quadRightRef, 0f, 1f, uMid, vTop, u1, vBot);
 
-            if (turning && snapColorTexId != 0 && sheetRightRef != null)
+            if (turning && snapColorTexId != 0 && sheetStripRef != null)
             {
-                turnT = Math.Min(1f, turnT + deltaTime / TurnSeconds);
+                turnT = Math.Min(1f, turnT + deltaTime / Math.Max(0.01f, turnSeconds));
+                bool intermediate = flipsLeft > 0;
 
                 // Underneath: the origin side keeps the OLD page (the sheet has
                 // not left it… physically it HAS — the old page IS the sheet —
@@ -821,34 +1438,61 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
                 DrawMesh(quadLeftRef, fwd ? snapColorTexId : fboColorTexId, mvQuadLeft, normalShaded: 0);
                 DrawMesh(quadRightRef, fwd ? fboColorTexId : snapColorTexId, mvQuadRight, normalShaded: 0);
 
-                // The sheet: ease across 0..180°, lifting toward the camera.
-                float e = turnT < 0.5f ? 4f * turnT * turnT * turnT
-                    : 1f - MathF.Pow(-2f * turnT + 2f, 3f) / 2f;   // ease-in-out cubic
+                // The swing. A landing turn eases in and out so it settles; a sheet
+                // mid-series runs at constant angular speed, because a series of
+                // eased turns reads as several separate turns rather than as one
+                // continuous leafing-through.
+                float e = intermediate
+                    ? turnT
+                    : turnT < 0.5f ? 4f * turnT * turnT * turnT
+                                   : 1f - MathF.Pow(-2f * turnT + 2f, 3f) / 2f;   // ease-in-out cubic
                 float phi = e * MathF.PI;
-                bool pastVertical = phi > MathF.PI / 2f;
 
-                Mat4f.Identity(sheetF);
-                Mat4f.RotateY(sheetF, sheetF, fwd ? -phi : phi);
-                Mat4f.Mul(sheetM, mv, Mat4f.Mul(tmpM, sheetF, aspectM));
+                // Geometry carries the aspect itself, so the sheet takes mv alone.
+                float pageHalfW = cropW / cropH;
+                int splitCol = BuildBentSheet(
+                    phi, CurlAt(turnT, intermediate), pageHalfW, fwd ? 1 : -1,
+                    uSpine: uMid,
+                    uOuterFront: fwd ? u1 : u0,
+                    uOuterBack: fwd ? u0 : u1,
+                    vTop, vBot);
 
-                var sheet = fwd ? sheetRightRef : sheetLeftRef!;
-                if (!pastVertical)
+                // Two draws, split at the column where the paper passes vertical:
+                // everything short of it still presents the outgoing page, everything
+                // past it presents the incoming one. The rigid sheet had to swap both
+                // at once at the halfway mark; a curled one shows both at once, which
+                // is what it would really do.
+                // Mid-series sheets can go blank instead: at 60 to 130 ms a sheet the
+                // pixels are unreadable either way, and which of the two reads as leafing
+                // rather than as strobing is a question only the eye settles.
+                bool blank = intermediate && FlipPaper;
+                int frontTex = blank ? PaperTexId() : snapColorTexId;
+                int backTex = blank ? PaperTexId() : fboColorTexId;
+
+                int frontQuads = splitCol * (TurnRows - 1);
+                int backQuads = StripQuads - frontQuads;
+                if (frontQuads > 0)
                 {
-                    // Face side: the OLD page of the turning half.
-                    float a0 = fwd ? uMid : u0, a1 = fwd ? u1 : uMid;
-                    UpdateQuadUv(lastUvSheet, sheet, fwd ? 0f : -1f, fwd ? 1f : 0f, a0, vTop, a1, vBot);
-                    DrawMesh(sheet, snapColorTexId, sheetM, normalShaded: 0, tint: SheetShade(phi));
+                    stripStart[0] = 0; stripSize[0] = frontQuads * 6;
+                    DrawStrip(frontTex, SheetShade(phi + CurlAt(turnT, intermediate) * 0.25f));
                 }
-                else
+                if (backQuads > 0)
                 {
-                    // Back side: the NEW page of the landing half, u-reversed —
-                    // the sheet's outer edge points the other way now.
-                    float a0 = fwd ? uMid : u1, a1 = fwd ? u0 : uMid;
-                    UpdateQuadUv(lastUvSheet, sheet, fwd ? 0f : -1f, fwd ? 1f : 0f, a0, vTop, a1, vBot);
-                    DrawMesh(sheet, fboColorTexId, sheetM, normalShaded: 0, tint: SheetShade(phi));
+                    stripStart[0] = frontQuads * 6; stripSize[0] = backQuads * 6;
+                    DrawStrip(backTex, SheetShade(phi + CurlAt(turnT, intermediate) * 0.75f));
                 }
 
-                if (turnT >= 1f) turning = false;
+                if (turnT >= 1f)
+                {
+                    if (flipsLeft > 0)
+                    {
+                        // Next sheet in the series, straight into its swing.
+                        flipsLeft--;
+                        turnT = 0f;
+                        turnSeconds = FlipDuration(flipsTotal - 1 - flipsLeft, flipsTotal);
+                    }
+                    else turning = false;
+                }
             }
             else
             {
@@ -868,11 +1512,44 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
         if (!wasActive) prog.Stop();
     }
 
-    /// <summary>Mild darkening peaking mid-flight — the turning sheet catches its own shadow.</summary>
+    /// <summary>Mild darkening peaking mid-flight — the turning sheet catches its own shadow.
+    /// Callers pass the mean tangent angle of the half they are about to draw, which the curl
+    /// can push a little past flat; clamping keeps that from flipping the sine negative and
+    /// brightening the sheet above its own paper on the last frames of a turn.</summary>
     private static Vec4f SheetShade(float phi)
     {
-        float shade = 1f - 0.16f * MathF.Sin(phi);
+        float shade = 1f - 0.16f * MathF.Sin(GameMath.Clamp(phi, 0f, MathF.PI));
         return new Vec4f(shade, shade, shade, 1f);
+    }
+
+    /// <summary>
+    /// Draws the index range in <see cref="stripStart"/>/<see cref="stripSize"/> of the bent
+    /// sheet. The geometry already carries the aspect stretch and the swing, so it takes mv
+    /// straight — no fold, no aspect matrix. Otherwise identical to DrawMesh; the two exist
+    /// apart only because the engine's partial-range draw is a different call.
+    /// </summary>
+    private void DrawStrip(int texId, Vec4f tint)
+    {
+        var r = capi.Render;
+        var prog = ShaderPrograms.Gui;
+
+        r.GLDisableDepthTest();
+        r.GlDisableCullFace();
+        r.GlToggleBlend(true);
+
+        prog.RgbaIn = new Vec4f(tint.X, tint.Y, tint.Z, tint.W * easeFade);
+        prog.ExtraGlow = 0;
+        prog.ApplyColor = 0;
+        prog.NoTexture = 0f;
+        prog.AlphaTest = 0f;
+        prog.OverlayOpacity = 0f;
+        prog.NormalShaded = 0;
+        prog.TransparentCenter = 0;
+        prog.DarkEdges = 0;
+        prog.Tex2d2D = texId;
+        prog.ProjectionMatrix = proj;
+        prog.ModelViewMatrix = mv;
+        r.RenderMesh(sheetStripRef!, stripStart, stripSize, 1);
     }
 
     private static float EaseOutCubic(float t)
@@ -900,10 +1577,17 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
                 capi.Event.RegisterCallback(_ => dlg?.TryClose(), 0);
             }
         }
-        else
+        else if (!StowComplete)
         {
             openT = Math.Min(1f, openT + deltaTime / DrawOutSeconds);
         }
+        // A landed stow holds at nothing until its close actually happens. The close is
+        // registered as a game callback above, and game callbacks do not run while the
+        // world is paused, so without this the book would march straight back open on the
+        // very next frame. The dialog drops the pause as the stow BEGINS, which is what
+        // normally lets that callback run (see GuiDialogIlluminatedBook.TryClose); this is
+        // the belt to that braces, for any path that leaves the world paused instead.
+        // StowComplete is cleared on the next ShowLive, so a reopen is unaffected.
 
         // The draw-out: fade in fast, rise through most of it, fold open once
         // the book is mostly up. All phases ease-out; all end at the knobs.
@@ -1063,8 +1747,9 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     {
         DisposeFbo();
         DisposeSnapFbo();
-        sheetRightRef?.Dispose(); sheetRightRef = null;
-        sheetLeftRef?.Dispose(); sheetLeftRef = null;
+        sheetStripRef?.Dispose(); sheetStripRef = null;
+        sheetStrip = null;
+        paperTex?.Dispose(); paperTex = null;
         copyQuadRef?.Dispose(); copyQuadRef = null;
         quadLeftRef?.Dispose(); quadLeftRef = null;
         quadRightRef?.Dispose(); quadRightRef = null;
@@ -1076,6 +1761,8 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
         tabRightRef?.Dispose(); tabRightRef = null;
         labelQuadRef?.Dispose(); labelQuadRef = null;
         labelQuadHRef?.Dispose(); labelQuadHRef = null;
+        foreach (var t in scrapTextures.Values) t.Dispose();
+        scrapTextures.Clear();
         foreach (var tex in labelTextures.Values) tex.Dispose();
         labelTextures.Clear();
     }

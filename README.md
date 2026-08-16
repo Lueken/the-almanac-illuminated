@@ -13,7 +13,7 @@ The flat page is still there. It is the same book, the same chapters, the same l
 - **By choice.** Alt+P switches presentation, or `.almbook flat` / `.almbook physical`. The choice is remembered per install in `ModData/almanacilluminated/settings.json`.
 - **By fallback.** The physical book captures the composed spread into an offscreen framebuffer. If a machine will not give us one, the Almanac says so once and reads flat for the rest of the session. Nothing is lost but the tilt.
 
-`.almbook` on its own reports the current presentation. `.almbook tilt|yaw|dist|scale|fov|height <n>` tunes the framing live, and `.almbook reset` puts it back.
+`.almbook` on its own reports the current presentation. `.almbook tilt|yaw|dist|scale|fov|height <n>` tunes the framing live, and `.almbook reset` puts it back. Every knob, what its number means, and its limits: [`docs/book-framing.md`](docs/book-framing.md).
 
 ## The guide-pack format
 

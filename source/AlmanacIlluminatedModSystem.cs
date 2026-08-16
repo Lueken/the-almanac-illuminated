@@ -25,6 +25,11 @@ public class AlmanacIlluminatedModSystem : ModSystem
     private IServerNetworkChannel? serverChannel;
     private BlockPos? homebasePos;
     private string homebaseLabel = "";
+
+    /// <summary>The homebase currently held is a local guess (the player's feet), made
+    /// because the server could not be asked. Cleared the moment a real answer lands, which
+    /// is also when any page built from the guess gets rebuilt.</summary>
+    private bool homebaseProvisional;
     private Action? onHomebaseReceived;
 
     // Book tabs registered by other mods (TCM's Callings first). Initialized
@@ -86,12 +91,6 @@ public class AlmanacIlluminatedModSystem : ModSystem
         if (capi != null) IlluminatedLogger.Info(capi, "reveal", $"Reveal provider registered: {keyNamespace}");
     }
 
-    /// <summary>
-    /// Whether a revealedBy key is earned. The degradation rule is deliberate: a key
-    /// whose namespace has NO registered provider is treated as revealed, so a guide
-    /// authored against an absent mod never produces a permanently dead page. A
-    /// provider that throws is treated the same way, for the same reason.
-    /// </summary>
     /// <summary>Point a freshly built library at the same reveal providers the sections use, so
     /// pack-level `revealedBy` hides a whole chapter and its tab. Called at every construction
     /// site; a library built before any provider registers simply shows everything, which is the
@@ -101,17 +100,48 @@ public class AlmanacIlluminatedModSystem : ModSystem
         if (library != null) library.RevealProbe = IsRevealed;
     }
 
-    public bool IsRevealed(string key)
+    /// <summary>Quest-step lookup for sibling mods' completion toasts (API stable as of
+    /// 0.1.4): returns the text of every quest item across loaded guide packs whose
+    /// `doneWhen` equals <paramref name="revealKey"/>. Empty list when none match, never
+    /// null. TCM calls this on a live knowledge earn to raise its animated-check toast.</summary>
+    public System.Collections.Generic.IReadOnlyList<string> GetQuestStepsFor(string revealKey)
     {
-        if (string.IsNullOrEmpty(key)) return true;
+        return QuestStepIndex.StepsFor(guidePacks, revealKey);
+    }
+
+    /// <summary>
+    /// Whether a revealedBy key is earned. The degradation rule is deliberate: a key
+    /// whose namespace has NO registered provider is treated as revealed, so a guide
+    /// authored against an absent mod never produces a permanently dead page. A
+    /// provider that throws is treated the same way, for the same reason.
+    /// </summary>
+    public bool IsRevealed(string key) => Probe(key, whenUnknown: true);
+
+    /// <summary>
+    /// Whether a key has actually been EARNED. Same providers as <see cref="IsRevealed"/>,
+    /// opposite degradation: a key whose namespace has no registered provider counts as not
+    /// earned, and so does a provider that throws.
+    ///
+    /// The split is deliberate. A reveal degrades open because a guide written against an
+    /// absent mod must never leave a page permanently dead. Completion is the other way
+    /// round: nothing can have been done in a mod that is not loaded, and ticking every box
+    /// on a checklist nobody can complete would be a lie the reader cannot correct. Used by
+    /// a quest item's `doneWhen` and by a section's `whenChapterComplete`.
+    /// </summary>
+    public bool IsEarned(string key) => Probe(key, whenUnknown: false);
+
+    private bool Probe(string key, bool whenUnknown)
+    {
+        if (string.IsNullOrEmpty(key)) return whenUnknown;
         int i = key.IndexOf(':');
         string ns = i > 0 ? key.Substring(0, i) : key;
-        if (!revealProviders.TryGetValue(ns, out var provider)) return true;
+        if (!revealProviders.TryGetValue(ns, out var provider)) return whenUnknown;
         try { return provider(key); }
         catch (System.Exception e)
         {
-            if (capi != null) IlluminatedLogger.Warn(capi, "reveal", $"provider '{ns}' threw on '{key}' ({e.Message}); treating as revealed");
-            return true;
+            if (capi != null) IlluminatedLogger.Warn(capi, "reveal",
+                $"provider '{ns}' threw on '{key}' ({e.Message}); treating as {(whenUnknown ? "revealed" : "unearned")}");
+            return whenUnknown;
         }
     }
 
@@ -181,11 +211,20 @@ public class AlmanacIlluminatedModSystem : ModSystem
 
     private void OnHomebaseResponse(HomebaseResponse msg)
     {
+        bool wasProvisional = homebaseProvisional;
         homebasePos = new BlockPos(msg.X, msg.Y, msg.Z);
         homebaseLabel = msg.BedSpawn ? "your bed" : "world spawn";
+        homebaseProvisional = false;
+
         var cb = onHomebaseReceived;
         onHomebaseReceived = null;
-        cb?.Invoke();
+        if (cb != null) { cb(); return; }
+
+        // Nobody was waiting, which means a page was already built from the player's
+        // feet because the server could not answer at the time. Now that the real bound
+        // spawn has landed, rebuild it rather than leaving the reader a climate for the
+        // wrong place until they reopen the tab.
+        if (wasProvisional) bookDialog?.RefreshSpread();
     }
 
     /// <summary>
@@ -195,17 +234,35 @@ public class AlmanacIlluminatedModSystem : ModSystem
     /// </summary>
     private void EnsureHomebase(Action onReady)
     {
-        if (clientChannel?.Connected == true)
+        // The reply can only come back if the server is TICKING. The book pauses
+        // singleplayer while it is open (GuiDialogIlluminatedBook.PauseEligible), and a
+        // paused integrated server never processes the request, so asking would hand the
+        // caller a continuation that can never run. Crops and Weather put their whole
+        // page open inside that continuation, so the tab simply stopped responding: the
+        // freeze reported on 2026-08-08, opening Crops from the Journal in a paused world.
+        //
+        // Nothing here may ever wait. If the server cannot answer, answer locally now and
+        // let the real position arrive later if it ever does.
+        bool serverCanAnswer = clientChannel?.Connected == true && capi?.IsGamePaused != true;
+
+        if (serverCanAnswer)
         {
             onHomebaseReceived = onReady;
-            clientChannel.SendPacket(new HomebaseRequest());
+            clientChannel!.SendPacket(new HomebaseRequest());
+            return;
         }
-        else
+
+        // Best answer available without the server: whatever it told us last time, else
+        // where the player is standing. Keeping the earlier answer matters because it is
+        // the real bound spawn, and a page built from it should not fall back to the
+        // player's feet just because the world happens to be paused this time.
+        if (homebasePos == null)
         {
             homebasePos = capi!.World.Player.Entity.Pos.AsBlockPos;
             homebaseLabel = "where you stand";
-            onReady();
+            homebaseProvisional = true;
         }
+        onReady();
     }
 
     public override void StartClientSide(ICoreClientAPI api)
@@ -247,6 +304,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         // (that exact failure shipped once during development).
         LoadSettings();
         physicalView = new PhysicalBookView(api);
+        ApplyLoadedKnobs();   // LoadSettings ran before this existed; hand it the saved tuning now
         physicalView.OnCaptureUnavailable = OnCaptureUnavailable;
         api.Event.RegisterRenderer(physicalView, EnumRenderStage.Ortho, "almanacilluminated-bookview");
 
@@ -255,7 +313,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         api.Input.SetHotKeyHandler(PresentationHotkeyCode, _ => { TogglePresentation(); return true; });
 
         api.ChatCommands.Create("almbook")
-            .WithDescription("Almanac presentation. No args: report. Args: physical | flat, pause [on|off] (singleplayer reading pause), or a physical-book knob (tilt|yaw|dist|scale|fov|height <n>, model <0|1>, reset)")
+            .WithDescription("Almanac presentation. No args: report. Args: physical | flat, pause [on|off] (singleplayer reading pause), or a physical-book knob: framing (tilt|yaw|dist|scale|fov|height <n>), page bend (bend|stiff|lead|corner <n>), leafing-through (flipslow|flipfast|flipcurl|flipscale|flipmax <n>, flippaper <0|1>), model <0|1>, reset. Knobs save as you set them.")
             .WithArgs(api.ChatCommands.Parsers.OptionalAll("arg"))
             .HandleWith(OnBookCommand);
 
@@ -391,6 +449,14 @@ public class AlmanacIlluminatedModSystem : ModSystem
         AttachRevealProbe();
         bookDialog = new GuiDialogIlluminatedBook(capi, library, () => homebasePos, EnsureHomebase, bookTabs);
         bookDialog.PauseOnOpenPref = () => pauseOnOpen;
+
+        // Say so on the page when the climate was read from the player's feet rather than
+        // their bound spawn. The reader is owed the difference: a Crops page reckoned from
+        // where they happen to be standing can name a different planting season than their
+        // homestead's, and nothing else on the page would give that away.
+        bookDialog.HomebaseNote = () => homebaseProvisional
+            ? "Reckoned from where you stand. The world is held still, so your bound spawn could not be asked after."
+            : null;
         bookDialog.OnReadingChanged = reading =>
         {
             // Local truth first: the reader's own render never waits on the server
@@ -499,7 +565,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         {
             if (!System.IO.File.Exists(SettingsPath)) return;
             var cfg = Newtonsoft.Json.JsonConvert.DeserializeObject<BookSettings>(System.IO.File.ReadAllText(SettingsPath));
-            if (cfg != null) { physicalPreferred = cfg.Physical; pauseOnOpen = cfg.PauseOnOpen; }
+            if (cfg != null) { physicalPreferred = cfg.Physical; pauseOnOpen = cfg.PauseOnOpen; loadedKnobs = cfg; }
         }
         catch (Exception e)
         {
@@ -512,13 +578,58 @@ public class AlmanacIlluminatedModSystem : ModSystem
         try
         {
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SettingsPath)!);
-            System.IO.File.WriteAllText(SettingsPath,
-                Newtonsoft.Json.JsonConvert.SerializeObject(new BookSettings { Physical = physicalPreferred, PauseOnOpen = pauseOnOpen }));
+            var cfg = new BookSettings { Physical = physicalPreferred, PauseOnOpen = pauseOnOpen };
+            if (physicalView != null)
+            {
+                var p = physicalView;
+                cfg.Tilt = p.TiltDeg; cfg.Yaw = p.YawDeg; cfg.Dist = p.Dist;
+                cfg.Scale = p.Scale; cfg.Fov = p.FovDeg; cfg.Height = p.HeightOff;
+                cfg.Bend = p.BendMax; cfg.Stiff = p.BendStiff; cfg.Lead = p.BendLead; cfg.Corner = p.BendCorner;
+                cfg.FlipSlow = p.FlipSlow; cfg.FlipFast = p.FlipFast; cfg.FlipCurl = p.FlipCurl;
+                cfg.FlipScale = p.FlipScale; cfg.FlipMax = p.FlipMax; cfg.FlipPaper = p.FlipPaper;
+            }
+            System.IO.File.WriteAllText(SettingsPath, Newtonsoft.Json.JsonConvert.SerializeObject(cfg));
         }
         catch (Exception e)
         {
             IlluminatedLogger.Warn(capi!, "settings", $"Could not save book settings: {e.Message}");
         }
+    }
+
+    /// <summary>
+    /// The settings file as last read. Held because <see cref="LoadSettings"/> runs before
+    /// the physical view exists (it is deliberately constructed after, so a throw in command
+    /// registration cannot take the presentation with it), so the knobs cannot be applied at
+    /// read time and are pushed into the view the moment it is built.
+    /// </summary>
+    private BookSettings? loadedKnobs;
+
+    /// <summary>
+    /// Pushes saved knob values into a freshly built view. Every knob is nullable and a null
+    /// is left alone, so a settings file written by an earlier version keeps this version's
+    /// shipped defaults for anything it never heard of, instead of zeroing it.
+    /// </summary>
+    private void ApplyLoadedKnobs()
+    {
+        if (loadedKnobs == null || physicalView == null) return;
+        var c = loadedKnobs;
+        var p = physicalView;
+        if (c.Tilt.HasValue) p.TiltDeg = c.Tilt.Value;
+        if (c.Yaw.HasValue) p.YawDeg = c.Yaw.Value;
+        if (c.Dist.HasValue) p.Dist = c.Dist.Value;
+        if (c.Scale.HasValue) p.Scale = c.Scale.Value;
+        if (c.Fov.HasValue) p.FovDeg = c.Fov.Value;
+        if (c.Height.HasValue) p.HeightOff = c.Height.Value;
+        if (c.Bend.HasValue) p.BendMax = c.Bend.Value;
+        if (c.Stiff.HasValue) p.BendStiff = c.Stiff.Value;
+        if (c.Lead.HasValue) p.BendLead = c.Lead.Value;
+        if (c.Corner.HasValue) p.BendCorner = c.Corner.Value;
+        if (c.FlipSlow.HasValue) p.FlipSlow = c.FlipSlow.Value;
+        if (c.FlipFast.HasValue) p.FlipFast = c.FlipFast.Value;
+        if (c.FlipCurl.HasValue) p.FlipCurl = c.FlipCurl.Value;
+        if (c.FlipScale.HasValue) p.FlipScale = c.FlipScale.Value;
+        if (c.FlipMax.HasValue) p.FlipMax = c.FlipMax.Value;
+        if (c.FlipPaper.HasValue) p.FlipPaper = c.FlipPaper.Value;
     }
 
     private class BookSettings
@@ -527,6 +638,14 @@ public class AlmanacIlluminatedModSystem : ModSystem
         /// <summary>Singleplayer reading pause (on by default; `.almbook pause off` to
         /// keep the days moving). Saved but inert in multiplayer.</summary>
         public bool PauseOnOpen = true;
+
+        // Framing, bend and flip knobs. Nullable on purpose: absent means "use the shipped
+        // default", which is what lets a new knob ship without rewriting everyone's file.
+        public float? Tilt, Yaw, Dist, Scale, Fov, Height;
+        public float? Bend, Stiff, Lead, Corner;
+        public float? FlipSlow, FlipFast, FlipCurl, FlipScale;
+        public int? FlipMax;
+        public bool? FlipPaper;
     }
 
     /// <summary>
@@ -559,6 +678,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
                 return TextCommandResult.Success(physicalView.Describe());
             case "reset":
                 physicalView.Reset();
+                SaveSettings();
                 return TextCommandResult.Success($"Reset. {physicalView.Describe()}");
             case "hand":
                 return OnHandKnob(parts);
@@ -587,7 +707,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
                 System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v))
         {
             return TextCommandResult.Error(
-                "Usage: .almbook | .almbook physical|flat | .almbook pause [on|off] | .almbook tilt|yaw|dist|scale|fov|height <n> | .almbook model <0|1> | .almbook reset");
+                "Usage: .almbook | .almbook physical|flat | .almbook pause [on|off] | .almbook tilt|yaw|dist|scale|fov|height <n> | .almbook bend|stiff|lead|corner <n> | .almbook flipslow|flipfast|flipcurl|flipscale|flipmax <n> | .almbook flippaper <0|1> | .almbook model <0|1> | .almbook reset");
         }
 
         switch (verb)
@@ -600,11 +720,27 @@ public class AlmanacIlluminatedModSystem : ModSystem
             case "height": physicalView.HeightOff = v; break;
             case "model": physicalView.ModelEnabled = v != 0; break;
             case "quad": physicalView.QuadEnabled = v != 0; break;
+            // The bend of a turning page. 'bend 0' restores the old rigid sheet.
+            case "bend": physicalView.BendMax = GameMath.Clamp(v, 0f, 2.5f); break;
+            case "stiff": physicalView.BendStiff = GameMath.Clamp(v, 0.2f, 6f); break;
+            case "lead": physicalView.BendLead = GameMath.Clamp(v, 0.1f, 4f); break;
+            case "corner": physicalView.BendCorner = GameMath.Clamp(v, 0f, 1.5f); break;
+            // The leafing-through series played when a jump crosses more than one spread.
+            case "flipslow": physicalView.FlipSlow = GameMath.Clamp(v, 0.02f, 0.6f); break;
+            case "flipfast": physicalView.FlipFast = GameMath.Clamp(v, 0.02f, 0.6f); break;
+            case "flipcurl": physicalView.FlipCurl = GameMath.Clamp(v, 0f, 3f); break;
+            case "flipscale": physicalView.FlipScale = GameMath.Clamp(v, 0f, 4f); break;
+            case "flipmax": physicalView.FlipMax = (int)GameMath.Clamp(v, 1f, 24f); break;
+            case "flippaper": physicalView.FlipPaper = v != 0; break;
             default:
                 return TextCommandResult.Error(
-                    $"Unknown knob '{verb}'. physical, flat, pause, tilt, yaw, dist, scale, fov, height, model, quad, reset, status.");
+                    $"Unknown knob '{verb}'. physical, flat, pause, tilt, yaw, dist, scale, fov, height, "
+                    + "bend, stiff, lead, corner, flipslow, flipfast, flipcurl, flipscale, flipmax, "
+                    + "flippaper, model, quad, reset, status.");
         }
 
+        // Tuning that does not survive a relaunch is tuning done twice.
+        SaveSettings();
         IlluminatedLogger.Info(capi, "physical", $"almbook: {physicalView.Describe()}");
         return TextCommandResult.Success(physicalView.Describe());
     }

@@ -2,7 +2,7 @@
 
 This is the format you write to add a chapter to The Almanac. A guide pack is plain JSON. No code. A chapter appears in game only when the mod it documents is loaded.
 
-Status: v0.1 draft, 2026-06-12. This document is canonical. The published JSON Schema follows it, never the reverse.
+Status: v0.1 draft, 2026-06-12. Last extended 2026-08-08 with `doneWhen` and `whenChapterComplete`, both additive: an older engine skips a field it does not know, so neither forces a `schemaVersion` bump. This document is canonical. The published JSON Schema follows it, never the reverse.
 
 ---
 
@@ -111,6 +111,13 @@ Two hints return control where it matters.
 - `pageBreakBefore: true`. The section starts a new page, the left page of the next spread. Use it to open a major topic.
 - `revealedBy` (optional). A reveal key, `namespace:rest` (for example `almanactcm:met-first-mass`). While the key is unearned, the section's title still renders but its blocks give way to a faint hint line, so the reader knows there is something to earn without being told how. Reveal state comes from a provider the owning mod registers (`RegisterRevealProvider` on the mod system; TCM backs `almanactcm` with its per-player Knowledge store). The degradation rule is absolute: a key whose namespace has no registered provider renders as revealed. A guide authored against an absent mod must never produce a permanently dead page.
 - `hint` (optional). The placeholder line shown while unrevealed. A literal or a `#langkey`. Defaults to the book's own line ("This page waits for practiced hands.").
+- `whenChapterComplete` (optional, boolean). The section renders only once every reveal key the chapter references has been earned. That set is the chapter's own `revealedBy` plus every section's `revealedBy`, counted once each. A chapter that references no reveal keys at all is complete by default, so the section always renders.
+
+`whenChapterComplete` is the opposite of `revealedBy` in what it shows while it waits. An unrevealed section still prints its title and a hint line, because the reader should know there is something there to earn. A section held back by `whenChapterComplete` prints nothing at all: no title, no hint, no gap. It is the afterword, the closing word once the road has been walked, and a road still being walked should not carry a sealed page at its end announcing that it ends.
+
+The degradation rule inverts too, and this is deliberate. `revealedBy` degrades open: a key whose namespace has no registered provider counts as revealed, so an absent mod never leaves a dead page. Completion degrades closed: an unprovided key counts as unearned. Nothing can have been finished in a mod that is not loaded, and a book that congratulates a reader on a road they never walked is worse than one that stays quiet. The same rule governs `doneWhen` in section 7.
+
+A section may carry both fields. `whenChapterComplete` is checked first, because showing nothing is the stronger of the two answers.
 
 This is the hybrid model. Auto-flow handles the common case and never overflows. The two hints buy back the control an art-directed page needs. `title` is optional. Omit it for a continuation section.
 
@@ -133,7 +140,7 @@ A block is `{ "type": "...", ...props }`. Any block may carry one common field:
 | `materials` | `items: [{ code, label?, count? }]` | A captioned itemstack grid of clickable slots. |
 | `recipe` | `recipe` or `output` | A native recipe render, reusing the handbook's own component. |
 | `callout` | `variant` (`author`, `tip`, `warning`, `lore`), `text`, `icon?` | A bordered, tinted aside. This is the author's-note box. `text` is PLAIN text here (the box already styles it italic); VTML tags are not parsed inside callouts and will show literally. |
-| `quest` | `questId?`, `items: [{ text, done? }]` | A checklist. See section 7. |
+| `quest` | `questId?`, `items: [{ text, done?, doneWhen? }]` | A checklist. See section 7. |
 | `figure` | `image`, `caption?`, `align?` (`left`, `right`, `full`) | An embedded illustration with an optional margin caption. |
 | `ledger` | `entries: [text, ...]` | A dated journal block in italic. |
 | `divider` | `ornament?` | A horizontal ornamental rule in the accent color. |
@@ -175,6 +182,24 @@ A `quest` block degrades by capability.
 - Without Progression Framework, or without `questId`: the block renders as a static checklist from `items` and honors the authored `done` flags. No tracking. No error.
 
 Progression Framework is never required. A guide that uses quest blocks reads fine without it.
+
+### `doneWhen`: a box that ticks itself
+
+An item may name a reveal key instead of, or alongside, a static flag.
+
+```json
+{ "type": "quest", "items": [
+  { "text": "Assemble a Surveyor's Rod", "done": true },
+  { "text": "Sight the canyon rim from your stake", "doneWhen": "almanactcm:sighted-canyon-rim" },
+  { "text": "Set down three bearings in the ledger" }
+]}
+```
+
+An item reads as done when its `done` flag is true, or when its `doneWhen` key reports earned. The two are an OR, so `done: true` still wins on its own and an authored checklist keeps working exactly as it did. A ticked item takes the same muted ink either way.
+
+`doneWhen` reads the same providers `revealedBy` does, and takes the same `namespace:rest` form. The degradation is the strict one described in section 4: a key whose namespace has no registered provider leaves the box OPEN. A checklist is a record of what the reader has done, and it must never claim credit for work in a mod that is not even loaded.
+
+Naming a key here also registers the step with the book. A mod that grants a knowledge key can ask `GetQuestStepsFor(key)` on the Illuminated mod system for the text of every step that key just closed, wherever it is written, and raise its own notice for them. Steps are matched across all loaded chapters, so one key may close steps in several guides at once.
 
 ---
 

@@ -1,0 +1,166 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Lueken/the-almanac-illuminated/main/docs/guide-pack.schema.json",
+  "schemaVersion": 1,
+  "id": "thequire:overview",
+  "overview": true,
+  "title": "The Almanac",
+  "subtitle": "How this world is different",
+  "byline": "the Almanac pack",
+  "accentColor": "#6a5230",
+
+  "sections": [
+    {
+      "id": "welcome",
+      "title": "Welcome",
+      "blocks": [
+        { "type": "paragraph", "dropcap": true,
+          "text": "This is not vanilla Vintage Story with a pile of mods bolted on. It is one world, tuned to feel like a single designed game. Survival here is slower, more physical, and more rewarding: tools are earned, materials have character, and progress comes from understanding the world rather than grinding through it." },
+        { "type": "paragraph",
+          "text": "You will not leave it the same person either. Every trade in this world is learned the way a hand learns a thing, by doing the work until it settles. There is no skill tree, no points to spend, and nothing you can grind. You become what you keep doing." },
+        { "type": "paragraph",
+          "text": "What follows is the short version of how this place differs from the base game, and why. Each part below opens a fuller guide if you want to know how to actually do the thing. Read this before your first night." }
+      ]
+    },
+
+    {
+      "id": "philosophy",
+      "title": "The Idea",
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "A good modpack is not the one with the most mods. It is the one with the fewest fights between them. Every mod here was chosen to pull in the same direction, so the systems reinforce each other instead of stacking on top of one another." },
+        { "type": "steps", "ordered": false, "items": [
+          "<strong>Every system has one owner.</strong> Heat, thirst, hunger, wood, ore, water are each run by a single mod, so nothing double-counts or contradicts.",
+          "<strong>Mods add, they do not replace.</strong> Vanilla recipes and progression still hold. The pack extends them with depth, not detours.",
+          "<strong>Progress is gated by knowledge and geology, not grind.</strong> The next tier is somewhere specific in the world. Your job is to find it.",
+          "<strong>Discovery is the spine.</strong> This Almanac and a quest framework keep track of what you have found and what comes next."
+        ]},
+        { "type": "callout", "variant": "author",
+          "text": "I wanted a world that rewards patience instead of speed, where the interesting part is understanding how something works rather than owning it. Everything slower here is slower on purpose. Bring patience for the early days. The world takes a while to learn, and so do you." }
+      ]
+    },
+
+    {
+      "id": "trades",
+      "title": "What You Become Here",
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "Twenty-one trades run quietly under everything else in this world, from woodcutting and metalworking to cooking, husbandry, glassmaking and the rest. You never enroll in one. You practice it, and the world keeps the account." },
+        { "type": "steps", "ordered": false, "items": [
+          "<strong>Only real work teaches.</strong> Grid recipes bank nothing, and neither does failure. A burnt roast or a shattered quench teaches you nothing at all.",
+          "<strong>A day can only teach so much.</strong> Practice saturates, and the page consolidates overnight. You slept on it.",
+          "<strong>Variety first, then focus.</strong> Early on a trade wants all its motions. Mastery comes later, from the one technique you keep returning to.",
+          "<strong>Death scatters the day, not the rank.</strong> Dying costs practice you had not yet banked. Your ranks are identity and never regress."
+        ]},
+        { "type": "link", "to": "almanac://chapter/almanactcm:trades",
+          "text": "How does practice actually work? See Trades." },
+        { "type": "link", "to": "almanac://chapter/almanactcm:mastery",
+          "text": "What lies past Master? See Mastery." }
+      ]
+    },
+
+    {
+      "id": "tools",
+      "title": "Why Tools Are Different Here",
+      "pageBreakBefore": true,
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "You will not make a headed tool in the crafting grid. The recipe a vanilla hand reaches for is gone, and a tool is fitted together by hand instead. It is the first thing that catches a newcomer out, and the first sign of a world that would rather you did the thing than picked it from a menu." },
+        { "type": "link", "to": "almanac://chapter/thequire:manualtoolcrafting",
+          "text": "How do I make tools now? See Manual Tool Crafting." }
+      ]
+    },
+
+    {
+      "id": "wood",
+      "title": "Why Wood Is Different Here",
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "In vanilla, every log chops the same and a felled tree vanishes into a tidy stack. Here, wood is a material with grain and character: some trees give way easily, others fight you, and a felled trunk is the start of the work, not the end of it." },
+        { "type": "link", "to": "almanac://chapter/thequire:indappledgroves",
+          "text": "How do I actually work wood now? See In Dappled Groves." }
+      ]
+    },
+
+    {
+      "id": "ore",
+      "title": "Why Ore Is Different Here",
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "Ore does not hide at random in the dark. It belongs to the rock around it, each metal keeping to its own stone at its own depth, so mining becomes a reading of the ground rather than a lottery. The whole tech ladder, copper to steel, is hidden in the world's geology for you to find." },
+        { "type": "link", "to": "almanac://chapter/thequire:interestingoregen",
+          "text": "Where does the metal live? See Interesting Ore Gen." },
+        { "type": "link", "to": "almanac://chapter/thequire:bettererprospecting",
+          "text": "How do I find it? See BetterEr Prospecting." }
+      ]
+    },
+
+    {
+      "id": "mining",
+      "title": "Why Mining Is Different Here",
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "Mining has weight here. The block gives way to the swing of the tool, not to a steady timer, and the ore does not end at the wall: there is more to do with it, and with the rock around it, than vanilla ever asked of you." },
+        { "type": "link", "to": "almanac://chapter/thequire:immersivemining",
+          "text": "How does mining work now? See Immersive Mining." }
+      ]
+    },
+
+    {
+      "id": "water",
+      "title": "Why Water Is Different Here",
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "You can die of thirst here, and faster than you can starve. Water stops being scenery you walk past and becomes a thing you carry, ration, and plan a camp around, the more so in the heat." },
+        { "type": "link", "to": "almanac://chapter/thequire:hydrateordiedrate",
+          "text": "How do I keep watered? See Hydrate Or Diedrate." }
+      ]
+    },
+
+    {
+      "id": "hunger",
+      "title": "Why Hunger Is Different Here",
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "Calories keep you alive. Variety makes you strong, and the wild will not tell you what is safe until you have risked a bite. Food here is a project with real reward, not a bar to top up. It is also where two trades meet: what the farm raises, the kitchen finishes." },
+        { "type": "link", "to": "almanac://chapter/thequire:expandedfoods",
+          "text": "How deep does cooking go? See Expanded Foods." },
+        { "type": "link", "to": "almanac://chapter/thequire:gourmand",
+          "text": "Why eat widely? See Gourmand." },
+        { "type": "link", "to": "almanac://chapter/thequire:foragersgamble",
+          "text": "What is safe to forage? See Foragers Gamble." }
+      ]
+    },
+
+    {
+      "id": "storage",
+      "title": "Why Storage Is Different Here",
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "You cannot wear your whole base on your back here. The wearable slots are graded by size, so four large bags is no longer an option, and what you carry becomes a packing decision made before you leave. Real capacity comes at the price of specialization, and the rest you build out one good pack at a time." },
+        { "type": "link", "to": "almanac://chapter/thequire:immersivebackpackoverhaul",
+          "text": "What can I carry now? See Immersive Backpacks." }
+      ]
+    },
+
+    {
+      "id": "first-night",
+      "title": "Before Your First Night",
+      "keepTogether": true,
+      "blocks": [
+        { "type": "paragraph",
+          "text": "Knapp a blade, fit it to a handle, and do not expect the grid to do it for you. Find water before you need it. Eat widely rather than deeply. Then pick up whichever tool you reached for most today and use it again tomorrow, because that is the one your hands are already learning." },
+        { "type": "callout", "variant": "lore",
+          "text": "The Almanac fills in as you go. Pages you have not earned stay closed, and the ones you have are yours for good." }
+      ]
+    }
+  ]
+}

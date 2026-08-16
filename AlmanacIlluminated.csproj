@@ -11,7 +11,7 @@
   <PropertyGroup>
     <ModName>The Almanac: Illuminated</ModName>
     <ModType>code</ModType>
-    <ModVersion>0.1.3</ModVersion>
+    <ModVersion>0.1.4</ModVersion>
     <ModId>almanacilluminated</ModId>
     <Description>A living questbook for the modded world. Pull the Almanac from your back pocket: chapters of guides authored by mod creators, appearing only for the mods you have loaded, with bookmarks, search, and tracked objectives. Reads as a book held in your hands, or as a flat page.</Description>
     <Side>universal</Side>
@@ -54,7 +54,8 @@
     <ReleasePath>$(ReleasesDir)\$(ReleaseFile).zip</ReleasePath>
     <ReleasePathDev>$(ReleasesDir)\$(ReleaseFile)_dev.zip</ReleasePathDev>
     <ExternalLibDir>$(ProjectDir)\external</ExternalLibDir>
-    <GameDirectory Condition="'$(GameDirectory)' == ''">$(VINTAGE_STORY)</GameDirectory>
+    <!-- The machine-level VINTAGE_STORY value carries literal quotes; strip them (same fix as TCM's csproj). -->
+    <GameDirectory Condition="'$(GameDirectory)' == ''">$(VINTAGE_STORY.Trim('"'))</GameDirectory>
   </PropertyGroup>
 
   <!-- Startup settings (consumed by Properties/launchSettings.json) -->

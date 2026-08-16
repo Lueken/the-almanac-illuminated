@@ -150,6 +150,10 @@
           "$ref": "#/$defs/localizableString",
           "description": "Placeholder line shown while the section is unrevealed. Falls back to the shipped default."
         },
+        "whenChapterComplete": {
+          "type": "boolean",
+          "description": "Render this section only once every reveal key the chapter references (its own revealedBy and every section's) has been earned. Unlike revealedBy, an incomplete chapter shows nothing of it: no title, no hint line. A key whose namespace has no registered provider counts as unearned here. A chapter that references no reveal keys is complete by default."
+        },
         "blocks": {
           "type": "array",
           "minItems": 1,
@@ -498,6 +502,11 @@
         },
         "done": {
           "type": "boolean"
+        },
+        "doneWhen": {
+          "type": "string",
+          "pattern": "^[^:\\s]+:[^:\\s]+",
+          "description": "Reveal key that ticks this item off once earned. Read from the same providers revealedBy uses, but strict: a key whose namespace has no registered provider leaves the box open. Combines with done as an OR."
         }
       }
     }

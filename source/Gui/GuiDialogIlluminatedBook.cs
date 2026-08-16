@@ -131,7 +131,15 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
 
     // The tab-ribbon margins on either side of the book. Full width when the
     // screen can spare it; never narrower than the longest ribbon label needs.
-    private const double TabMarginMax = 150, TabMarginMin = 90;
+    //
+    // The maximum is the room a named BOOKMARK gets to reach out into, and it was
+    // raised from 150 for them: a bookmark should carry its chapter's name at full
+    // size rather than shrink to an index slip. This can never cost the book any
+    // width. The margin below is already clamped to the space left over once the
+    // book is sized, so a larger cap only ever spends screen that was empty.
+    // Letter slips keep the old 150 and stay short (GuiElementChapterTabs.UnLetterW),
+    // which is what makes the bookmarks read as the longer thing.
+    private const double TabMarginMax = 200, TabMarginMin = 90;
 
     // Not readonly: author preview swaps the library live via ReloadLibrary.
     private GuideLibrary library;
@@ -160,6 +168,18 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
             if (string.IsNullOrEmpty(sec.RevealedBy)) continue;
             (sb ??= new System.Text.StringBuilder()).Append(host.IsRevealed(sec.RevealedBy!) ? '1' : '0');
         }
+
+        // Quest completion belongs in the stamp too. A `doneWhen` key earned mid-session
+        // changes a checkbox, and nothing else in this signature would notice: the toast
+        // fired, the store held the key, and the page kept serving its old ink until a
+        // relog (reported 2026-08-08 against almanactcm:is-roast-collected). Probed with
+        // IsEarned, not IsRevealed, so the stamp agrees with what the renderer draws.
+        // The set is ordered by the walk, so the stamp is stable between composes.
+        foreach (string key in ChapterRenderer.ChapterDoneWhenKeys(pack))
+            (sb ??= new System.Text.StringBuilder()).Append(host.IsEarned(key) ? 'X' : 'x');
+
+        // whenChapterComplete needs no entry of its own: it is computed from the very
+        // revealedBy keys already stamped above, so it can never drift on its own.
         return sb?.ToString() ?? "";
     }
     private int spreadIndex;
@@ -362,6 +382,10 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     public override void OnGuiOpened()
     {
         base.OnGuiOpened();
+        // A fresh open is not a navigation. Without this the first compose would
+        // measure against wherever the book was left last time and leaf through on
+        // arrival, over a capture belonging to the previous session of reading.
+        navValid = false;
         // The reading pause (requested by a beta reader: "I don't want to read the days
         // away"). Vanilla handbook precedent, but with ownership: only a pause this open
         // created is released at close.
@@ -513,7 +537,7 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         if (PhysicalMirror?.TryRemapRaw(x, y, out float a, out float b) != true) return false;
         bool leftSide = a < 0;
         float absA = Math.Abs(a);
-        if (absA < PhysicalBookView.SideTabAInner || absA > PhysicalBookView.SideTabAOuter) return false;
+        if (absA < PhysicalBookView.SideTabAInner) return false;
 
         int row = (int)Math.Round((PhysicalBookView.SideTabRow0 - b) / PhysicalBookView.SideTabRowStep);
         float rowB = PhysicalBookView.SideTabRow0 - row * PhysicalBookView.SideTabRowStep;
@@ -525,6 +549,16 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         int bottom = leftSide ? PhysLeftBottom : PhysRightBottom;
         int index = PhysicalBookView.SideTabIndexForRow(row, actions.Count, bottom);
         if (index < 0 || index >= actions.Count) return false;
+
+        // How far out this row actually reaches has to be settled AFTER the row resolves
+        // to a tab, because a named bookmark is far longer than a letter slip. Testing a
+        // single outer bound would either swallow clicks on the margin beside a letter or
+        // drop clicks on the far end of a bookmark.
+        var labels = leftSide ? PhysLeftTabs : PhysRightTabs;
+        float outer = index < labels.Length && labels[index].Length > 1
+            ? PhysicalBookView.NamedTabAOuter : PhysicalBookView.SideTabAOuter;
+        if (absA > outer) return false;
+
         actions[index]();
         return true;
     }
@@ -709,6 +743,45 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
 
     // --- Composition ------------------------------------------------------
 
+    /// <summary>Rebuild the current spread in place. For data that arrived after the page
+    /// was already drawn, such as a homebase the server could only answer for once the
+    /// world resumed. A no-op while shut, since opening composes anyway.</summary>
+    public void RefreshSpread()
+    {
+        if (!IsOpened()) return;
+
+        // Both of these are DERIVED from the homebase and cached with ??=, so recomposing
+        // alone would redraw the very same pages. Dropping them is the whole point of the
+        // call: it is made when the homebase itself has changed under them.
+        cropsColumns = null;
+        weatherPages = null;
+        ComposeSpread();
+    }
+
+    /// <summary>
+    /// A short line to open a homebase-derived page with when the position it was built
+    /// from is only a guess. Supplied by the mod system, which is what knows whether the
+    /// server ever answered. Null when the homebase is the real bound spawn.
+    /// </summary>
+    public Func<string?>? HomebaseNote;
+
+    /// <summary>
+    /// Opens the first column with the provisional-homebase note, when there is one. Call
+    /// once per BUILD, never per compose, or the note stacks up a line at a time.
+    /// </summary>
+    private void PrefixHomebaseNote(List<RichTextComponentBase[]> cols)
+    {
+        string? note = HomebaseNote?.Invoke();
+        if (string.IsNullOrEmpty(note) || cols.Count == 0) return;
+
+        var font = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody)
+            .WithFontSize(14f).WithSlant(Cairo.FontSlant.Italic)
+            .WithColor(new[] { 0.38, 0.32, 0.25, 1.0 });
+        var lead = new List<RichTextComponentBase> { new RichTextComponent(capi, note + "\n\n", font) };
+        lead.AddRange(cols[0]);
+        cols[0] = lead.ToArray();
+    }
+
     private void ComposeSpread()
     {
         // Size the book to a fraction of the screen. GUI bounds are unscaled
@@ -796,7 +869,11 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         else if (cropsMode)
         {
             catalog ??= CropCatalog.Build(capi);
-            cropsColumns ??= CropsRenderer.RenderPages(capi, catalog, getHomebase(), cropsSubColW, contentH);
+            if (cropsColumns == null)
+            {
+                cropsColumns = CropsRenderer.RenderPages(capi, catalog, getHomebase(), cropsSubColW, contentH);
+                PrefixHomebaseNote(cropsColumns);
+            }
             int maxSpread = System.Math.Max(0, (cropsColumns.Count - 1) / CropsColsPerSpread);
             spreadIndex = GameMath.Clamp(spreadIndex, 0, maxSpread);
             if (pendingOpenAtEnd) { spreadIndex = maxSpread; pendingOpenAtEnd = false; }
@@ -818,9 +895,13 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
             if (weatherMode)
             {
                 var hb = getHomebase();
-                weatherPages ??= hb != null
-                    ? WeatherRenderer.RenderPages(capi, HomeWeather.Sample(capi, hb), contentW, contentH)
-                    : new List<RichTextComponentBase[]> { System.Array.Empty<RichTextComponentBase>() };
+                if (weatherPages == null)
+                {
+                    weatherPages = hb != null
+                        ? WeatherRenderer.RenderPages(capi, HomeWeather.Sample(capi, hb), contentW, contentH)
+                        : new List<RichTextComponentBase[]> { System.Array.Empty<RichTextComponentBase>() };
+                    PrefixHomebaseNote(weatherPages);
+                }
                 pages = weatherPages;
             }
             else if (current != null)
@@ -1028,6 +1109,114 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
 
         if (journalMode)
             SingleComposer.GetTextArea("journaltext")?.SetValue(journalSpreads[spreadIndex], false);
+
+        NoteNavigation();
+    }
+
+    // --- flip-through -----------------------------------------------------
+    //
+    // Every navigation in the book funnels through ComposeSpread, so the distance
+    // moved is measured here rather than at each of the dozen call sites that can
+    // move it. A recompose that did not move (a refresh, a pin toggle, data
+    // arriving late) measures zero and animates nothing, which is what makes one
+    // hook safe for all of them.
+
+    /// <summary>
+    /// The leafing-through animation, parked by Jeffrey on 2026-08-09: the bend was right
+    /// but the rapid series did not feel right, and a wrong-feeling flourish on every tab
+    /// click is worse than no flourish. With this false a section jump plays the ordinary
+    /// single eased turn with the tuned bend, which is what he wants for now.
+    ///
+    /// Nothing else is removed. The measurement below still runs (it is a subtraction and
+    /// two field writes), the view still carries BeginFlipThrough and its knobs, and the
+    /// `.almbook flip*` knobs still set and save. Flipping this to true is the whole of
+    /// bringing it back, once the cadence has been rethought.
+    ///
+    /// Deliberately static readonly rather than const: a const false would let the compiler
+    /// fold the branch and report the call below as unreachable, and this build holds at
+    /// zero warnings.
+    /// </summary>
+    private static readonly bool FlipThroughEnabled = false;
+
+    /// <summary>Lets the view's `.almbook` readout say the flip knobs are inert rather than
+    /// report them as if they were driving something.</summary>
+    public static bool FlipThroughParked => !FlipThroughEnabled;
+
+    private int navSection = int.MinValue;
+    private int navSpread;
+    private bool navValid;
+
+    /// <summary>How many spreads a chapter is assumed to be worth when the jump crosses
+    /// chapters. True page counts are only known once a chapter has been paginated, and
+    /// paginating every chapter in between to count them would cost far more than the
+    /// answer is worth: the flip count is capped at seven either way, so all this
+    /// number has to do is separate "next door" from "across the book".</summary>
+    private const int ChapterJumpSpreads = 4;
+
+    /// <summary>An ordinal for whatever is on screen. Ordered chapters get their real
+    /// library index, so direction between two of them is meaningful; the standalone
+    /// views get distinct negative sentinels, which compare as "elsewhere" and nothing
+    /// finer, because there is no ordering between the journal and a chapter to have.</summary>
+    private int CurrentNavSection()
+    {
+        if (journalMode) return -2;
+        if (cropsMode) return -3;
+        if (weatherMode) return -4;
+        if (externalTab != null)
+        {
+            for (int i = 0; i < externalTabs.Count; i++)
+                if (externalTabs[i] == externalTab) return -10 - i;
+            return -9;
+        }
+        return library.OrderIndex(current);
+    }
+
+    /// <summary>
+    /// Compares where the book now sits against where it sat, and leafs through when
+    /// the jump is worth more than a single turn. Anything unresolvable falls through
+    /// to the ordinary one-page turn, and a physical view with nothing captured yet
+    /// refuses outright, so the flat presentation and a fresh open are both untouched.
+    /// </summary>
+    private void NoteNavigation()
+    {
+        int section = CurrentNavSection();
+        int spread = spreadIndex;
+
+        if (navValid && InPhysicalMode)
+        {
+            int dist;
+            bool forward;
+            if (section == navSection)
+            {
+                dist = System.Math.Abs(spread - navSpread);
+                forward = spread >= navSpread;
+            }
+            else if (section >= 0 && navSection >= 0)
+            {
+                dist = ChapterJumpSpreads * System.Math.Abs(section - navSection);
+                forward = section > navSection;
+            }
+            else
+            {
+                // One side has no place in the ordering. It is still a long way, and
+                // forward is the honest default for a jump with no direction.
+                dist = ChapterJumpSpreads;
+                forward = true;
+            }
+
+            // Only jumps land here. A single-spread step is the page corners' own turn,
+            // which they start before the spread recomposes; firing again would re-snapshot
+            // and restart the swing they are already halfway through.
+            if (dist > 1)
+            {
+                if (FlipThroughEnabled) PhysicalMirror!.BeginFlipThrough(forward, dist);
+                else PhysicalMirror!.BeginPageTurn(forward);
+            }
+        }
+
+        navSection = section;
+        navSpread = spread;
+        navValid = true;
     }
 
     /// <summary>
