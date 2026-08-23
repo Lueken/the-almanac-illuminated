@@ -23,6 +23,12 @@ public sealed class CropEntry
     public string SourceDomain = "game";
     public ItemStack? Produce;          // for the icon and the masked silhouette
 
+    /// <summary>The ripe plant block this entry was built from, kept so a familiarity
+    /// source can map the entry back to its own crop id by block code (the produce code
+    /// cannot do that job: breeding varietals give one species several produce items).
+    /// Null for fruit trees, which come from TypeProps rather than a block.</summary>
+    public Block? PlantBlock;
+
     // Seed-crop growing data, straight off the crop block's CropProps.
     public EnumSoilNutrient Nutrient;
     public float ColdDamageBelow;
@@ -89,22 +95,27 @@ public static class CropCatalog
 
     private static List<CropEntry> BuildSeedCrops(ICoreClientAPI capi)
     {
-        // Keep the highest-stage block per crop type: the ripe stage carries the produce drop.
-        var bestByType = new Dictionary<string, (Block block, int stage)>(StringComparer.OrdinalIgnoreCase);
+        // One entry per species. The ripe stage carries the produce drop, so the highest
+        // stage wins; an unsized block always beats a breeding varietal, because vanilla's
+        // own block is the one that names the plant plainly.
+        var bestByType = new Dictionary<string, (Block block, int stage, bool sized)>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var block in capi.World.Blocks)
         {
             if (block?.CropProps == null || block.Code == null) continue;
-            if (!TryParseCrop(block.Code, out string typeKey, out int stage)) continue;
+            if (!TryParseCrop(block.Code, out string typeKey, out int stage, out bool sized)) continue;
 
-            if (!bestByType.TryGetValue(typeKey, out var cur) || stage > cur.stage)
-                bestByType[typeKey] = (block, stage);
+            if (!bestByType.TryGetValue(typeKey, out var cur)
+                || (cur.sized && !sized)
+                || (cur.sized == sized && stage > cur.stage))
+                bestByType[typeKey] = (block, stage, sized);
         }
 
         var entries = new List<CropEntry>();
-        foreach (var (typeKey, (block, _)) in bestByType)
+        foreach (var (typeKey, (block, _, _)) in bestByType)
         {
-            var produce = ResolveProduce(block);
+            string type = typeKey.Substring(typeKey.IndexOf(':') + 1);
+            var produce = ResolveProduce(capi, block, type);
             if (produce?.Collectible?.Code == null) continue;   // no readable produce: skip rather than show a blank
 
             var cp = block.CropProps;
@@ -115,6 +126,7 @@ public static class CropCatalog
                 DisplayName = produce.GetName(),
                 SourceDomain = produce.Collectible.Code.Domain,   // the food's origin, so mod produce flags as modded
                 Produce = produce,
+                PlantBlock = block,
                 Nutrient = cp.RequiredNutrient,
                 ColdDamageBelow = cp.ColdDamageBelow,
                 HeatDamageAbove = cp.HeatDamageAbove,
@@ -126,10 +138,25 @@ public static class CropCatalog
         return entries;
     }
 
-    /// <summary>Crop blocks are coded "crop-{type}-{stage}" (the type itself may hold dashes).</summary>
-    private static bool TryParseCrop(AssetLocation code, out string typeKey, out int stage)
+    /// <summary>
+    /// The Art of Growing breeding addon's size ladder. A varietal is not its own plant:
+    /// wild carrots and gigantic carrots are carrots, and the catalogue lists the species
+    /// once. Folded here so the tab reads right whether or not TCM is installed (TCM keeps
+    /// its own copy of this ladder for familiarity ids; neither mod may depend on the other).
+    /// </summary>
+    private static readonly string[] VarietalSizes =
+        { "wild", "small", "medium", "decent", "large", "hefty", "gigantic" };
+
+    /// <summary>
+    /// Crop blocks are coded "crop-{type}-{stage}" (the type itself may hold dashes).
+    /// The breeding addon inserts a size ahead of the type — "crop-{size}-{type}-{stage}" —
+    /// which is folded away, with <paramref name="sized"/> reporting whether it was.
+    /// Only the game domain is folded, matching where the addon restages its crops, so a
+    /// mod crop that happens to begin with one of those words keeps its own identity.
+    /// </summary>
+    private static bool TryParseCrop(AssetLocation code, out string typeKey, out int stage, out bool sized)
     {
-        typeKey = ""; stage = 0;
+        typeKey = ""; stage = 0; sized = false;
         string path = code.Path;
         if (!path.StartsWith("crop-", StringComparison.OrdinalIgnoreCase)) return false;
 
@@ -138,6 +165,19 @@ public static class CropCatalog
 
         string type = path.Substring(5, dash - 5);    // between "crop-" and the trailing "-{stage}"
         if (type.Length == 0) return false;
+
+        if (code.Domain.Equals("game", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (string size in VarietalSizes)
+            {
+                if (!type.StartsWith(size + "-", StringComparison.OrdinalIgnoreCase)) continue;
+                type = type.Substring(size.Length + 1);
+                sized = true;
+                break;
+            }
+            if (type.Length == 0) return false;
+        }
+
         typeKey = code.Domain + ":" + type;
         return true;
     }
@@ -145,11 +185,19 @@ public static class CropCatalog
     /// <summary>
     /// The food a plant drops: its configured drops minus the seed, the cutting, and
     /// the plant's own block (an unripe bush drops only itself, so it resolves to null
-    /// and is skipped; a ripe bush drops the berry). First food wins.
+    /// and is skipped; a ripe bush drops the berry). Each candidate is canonicalised so
+    /// the card names the end product rather than a step on the way to it.
+    ///
+    /// Where a crop drops several foods, the one that shares the crop's own name wins.
+    /// A plant can shed a by-product before its crop: Art of Growing's onion lists
+    /// scallions ahead of the onion itself, and first-food-wins filed the whole species
+    /// under "Scallions". <paramref name="typeHint"/> is the crop type for seed crops and
+    /// null elsewhere, where first food remains the right answer.
     /// </summary>
-    private static ItemStack? ResolveProduce(Block block)
+    private static ItemStack? ResolveProduce(ICoreClientAPI capi, Block block, string? typeHint = null)
     {
         if (block.Drops == null) return null;
+        ItemStack? first = null;
         foreach (var drop in block.Drops)
         {
             var stack = drop?.ResolvedItemstack;
@@ -159,9 +207,77 @@ public static class CropCatalog
                 collCode.StartsWith("seed-", StringComparison.OrdinalIgnoreCase) ||
                 collCode.Contains("cutting", StringComparison.OrdinalIgnoreCase) ||
                 collCode.Contains("berrybush", StringComparison.OrdinalIgnoreCase)) continue;
-            return stack;
+
+            var resolved = Canonicalise(capi, stack);
+            first ??= resolved;
+            if (typeHint == null) return first;
+            if (resolved.Collectible.Code.Path.Contains(typeHint, StringComparison.OrdinalIgnoreCase))
+                return resolved;
         }
-        return null;
+        return first;
+    }
+
+    /// <summary>
+    /// Trades a drop for the thing the player actually ends up with, when the drop is a
+    /// step on the way rather than the food itself. Two cases, both from the Art of Growing
+    /// family: a wet grain bundle is threshing stock, not grain, and a size-tagged vegetable
+    /// is one varietal of a species the catalogue lists once. Every substitution is checked
+    /// against the loaded item and block registries first, so an unrecognised shape falls
+    /// through unchanged rather than blanking the card.
+    /// </summary>
+    private static ItemStack Canonicalise(ICoreClientAPI capi, ItemStack stack)
+    {
+        var code = stack.Collectible.Code;
+        string path = code.Path;
+        var tries = new List<string>();
+
+        // artofgrowing:grainbundle-{type}-{size}-wet -> game:grain-{type}
+        if (path.StartsWith("grainbundle-", StringComparison.OrdinalIgnoreCase))
+        {
+            string[] parts = path.Split('-');
+            if (parts.Length >= 2 && parts[1].Length > 0) tries.Add("game:grain-" + parts[1]);
+        }
+
+        // A size segment anywhere in the path: try the same code without it, in its own
+        // domain and in game's (artofgrowing:vegetable-large-cabbage -> game:vegetable-cabbage).
+        string plain = StripSizeSegment(path);
+        if (plain != path)
+        {
+            tries.Add(code.Domain + ":" + plain);
+            tries.Add("game:" + plain);
+        }
+
+        // A bare wet suffix, for any bundle shape the first rule did not catch.
+        if (path.EndsWith("-wet", StringComparison.OrdinalIgnoreCase))
+            tries.Add(code.Domain + ":" + path.Substring(0, path.Length - 4));
+
+        foreach (string candidate in tries)
+        {
+            var loc = new AssetLocation(candidate);
+            var item = capi.World.GetItem(loc);
+            if (item != null) return new ItemStack(item);
+            var blk = capi.World.GetBlock(loc);
+            if (blk != null && blk.Id != 0) return new ItemStack(blk);
+        }
+        return stack;
+    }
+
+    /// <summary>Drops one varietal-size segment from a dash-separated path, wherever it sits.</summary>
+    private static string StripSizeSegment(string path)
+    {
+        string[] parts = path.Split('-');
+        if (parts.Length < 3) return path;   // never strip a two-part code down to one
+        for (int i = 1; i < parts.Length; i++)
+        {
+            foreach (string size in VarietalSizes)
+            {
+                if (!parts[i].Equals(size, StringComparison.OrdinalIgnoreCase)) continue;
+                var kept = new List<string>(parts);
+                kept.RemoveAt(i);
+                return string.Join("-", kept);
+            }
+        }
+        return path;
     }
 
     /// <summary>
@@ -179,7 +295,7 @@ public static class CropCatalog
             if (block.Variant != null && block.Variant.TryGetValue("state", out var state)
                 && !state.Equals("ripe", StringComparison.OrdinalIgnoreCase)) continue;
 
-            var produce = ResolveProduce(block);
+            var produce = ResolveProduce(capi, block);
             if (produce?.Collectible?.Code == null) continue;
 
             entries.Add(new CropEntry
@@ -189,6 +305,7 @@ public static class CropCatalog
                 DisplayName = produce.GetName(),
                 SourceDomain = produce.Collectible.Code.Domain,
                 Produce = produce,
+                PlantBlock = block,
                 ColdDamageBelow = block.Attributes?["stopBelowTemperature"].AsFloat(float.NaN) ?? float.NaN,
                 HeatDamageAbove = block.Attributes?["stopAboveTemperature"].AsFloat(float.NaN) ?? float.NaN,
                 MultipleHarvests = true,
@@ -245,7 +362,7 @@ public static class CropCatalog
             if (block.Variant != null && block.Variant.TryGetValue("state", out var state)
                 && state.Equals("harvested", StringComparison.OrdinalIgnoreCase)) continue;
 
-            var produce = ResolveProduce(block);
+            var produce = ResolveProduce(capi, block);
             if (produce?.Collectible?.Code == null) continue;
 
             entries.Add(new CropEntry
@@ -255,6 +372,7 @@ public static class CropCatalog
                 DisplayName = produce.GetName(),
                 SourceDomain = produce.Collectible.Code.Domain,
                 Produce = produce,
+                PlantBlock = block,
                 ColdDamageBelow = float.NaN,
                 HeatDamageAbove = float.NaN,
             });

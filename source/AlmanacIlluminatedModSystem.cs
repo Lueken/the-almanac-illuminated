@@ -81,6 +81,34 @@ public class AlmanacIlluminatedModSystem : ModSystem
         if (capi != null) IlluminatedLogger.Info(capi, "tabs", $"External book tab registered: {tab.Label}");
     }
 
+    /// <summary>
+    /// The registered crop-familiarity supplier, or null when nothing supplies one. The
+    /// Crops tab reads this on every build; null (or a supplier reporting itself disabled)
+    /// is the plain-catalogue path, which is what Illuminated on its own always shows.
+    /// </summary>
+    public ICropFamiliaritySource? CropFamiliarity { get; private set; }
+
+    /// <summary>
+    /// How the Crops tab records what the reader has grown: a tally struck in the margin,
+    /// a rule inked as far as they have come, or plain counts. A reading preference, not a
+    /// gameplay one, so it lives in the client's own book settings. Inert with no
+    /// familiarity supplier registered, because then there is nothing to record.
+    /// </summary>
+    public GrowthMarksStyle CropMarks { get; private set; } = GrowthMarksStyle.Tally;
+
+    /// <summary>
+    /// Registers the crop-familiarity supplier for the Crops tab (client side). Call from
+    /// your mod's StartClientSide, any time before the book first opens. Last registration
+    /// wins; there is one tab and one taxonomy behind it.
+    /// </summary>
+    public void RegisterCropFamiliarity(ICropFamiliaritySource source)
+    {
+        if (source == null) return;
+        CropFamiliarity = source;
+        if (capi != null) IlluminatedLogger.Info(capi, "crops",
+            $"Crop familiarity supplier registered: {source.GetType().Name}");
+    }
+
     // Reveal providers, keyed by the namespace before the ':' in a section's
     // revealedBy key. TCM registers "almanactcm" backed by its Knowledge store.
     private readonly Dictionary<string, System.Func<string, bool>> revealProviders =
@@ -610,6 +638,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
                 physicalPreferred = cfg.Physical; pauseOnOpen = cfg.PauseOnOpen; loadedKnobs = cfg;
                 respectWorldLight = cfg.RespectLight ?? true;
                 illuminationFloor = IlluminationCurve.ClampFloor(cfg.LightFloor ?? IlluminationCurve.DefaultFloor);
+                if (System.Enum.TryParse<GrowthMarksStyle>(cfg.CropMarks, true, out var st)) CropMarks = st;
             }
         }
         catch (Exception e)
@@ -629,6 +658,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
                 PauseOnOpen = pauseOnOpen,
                 RespectLight = respectWorldLight,
                 LightFloor = illuminationFloor,
+                CropMarks = CropMarks.ToString(),
             };
             if (physicalView != null)
             {
@@ -696,6 +726,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
         /// <summary>Book brightness in total darkness (`.almbook light floor`).</summary>
         public float? LightFloor;
 
+        /// <summary>How the Crops tab records growing (`.almbook marks`). Absent = tally.</summary>
+        public string? CropMarks;
+
         // Framing, bend and flip knobs. Nullable on purpose: absent means "use the shipped
         // default", which is what lets a new knob ship without rewriting everyone's file.
         public float? Tilt, Yaw, Dist, Scale, Fov, Height;
@@ -756,6 +789,49 @@ public class AlmanacIlluminatedModSystem : ModSystem
     }
 
     /// <summary>
+    /// .almbook marks — how the Crops tab keeps its record of what has been grown.
+    /// Three hands for the same fact, because a tally, a rule and a count are three
+    /// different amounts of bookkeeping to have staring back at you.
+    /// </summary>
+    private TextCommandResult OnMarksCommand(string[] parts)
+    {
+        if (capi == null) return TextCommandResult.Error("Client API unavailable");
+
+        if (CropFamiliarity == null)
+            return TextCommandResult.Success(
+                "Nothing tracks what you have grown in this world, so the Crops tab keeps no record to draw.");
+
+        if (parts.Length < 2)
+            return TextCommandResult.Success(
+                $"The Crops tab records growing as {Describe(CropMarks)}. '.almbook marks tally|fullness|counts' to change it.");
+
+        string sub = parts[1].ToLowerInvariant();
+        GrowthMarksStyle chosen = sub switch
+        {
+            "tally" or "tallies" => GrowthMarksStyle.Tally,
+            "fullness" or "full" or "rule" => GrowthMarksStyle.Fullness,
+            "counts" or "count" or "numbers" => GrowthMarksStyle.Counts,
+            _ => (GrowthMarksStyle)(-1),
+        };
+        if ((int)chosen < 0)
+            return TextCommandResult.Error("Usage: .almbook marks tally|fullness|counts");
+
+        CropMarks = chosen;
+        SaveSettings();
+        // The tab caches its composed columns; drop them so the change shows on this open.
+        bookDialog?.InvalidateCrops();
+        IlluminatedLogger.Info(capi, "crops", $"Crop record style set to {chosen}");
+        return TextCommandResult.Success($"The Crops tab now records growing as {Describe(chosen)}.");
+    }
+
+    private static string Describe(GrowthMarksStyle s) => s switch
+    {
+        GrowthMarksStyle.Tally => "a tally struck in the margin",
+        GrowthMarksStyle.Fullness => "a rule inked as far as you have come",
+        _ => "plain counts",
+    };
+
+    /// <summary>
     /// .almbook — report or set the presentation, and tune the physical book's
     /// framing live. Every knob applies on the next frame; finding the
     /// readability envelope should never cost a restart.
@@ -791,6 +867,8 @@ public class AlmanacIlluminatedModSystem : ModSystem
                 return OnHandKnob(parts);
             case "light":
                 return OnLightCommand(parts);
+            case "marks":
+                return OnMarksCommand(parts);
             case "pause":
             {
                 if (parts.Length < 2)

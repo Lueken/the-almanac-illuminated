@@ -467,6 +467,26 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         ComposeSpread();
     }
 
+    /// <summary>
+    /// The Crops running head. With familiarity supplied, the tab is not a reference list
+    /// of everything that grows: it is the reader's own record of what they have put in the
+    /// ground, and the head should say which book they are holding.
+    /// </summary>
+    private string CropsTitle()
+    {
+        var host = capi.ModLoader.GetModSystem<AlmanacIlluminatedModSystem>();
+        return host?.CropFamiliarity is { Enabled: true } ? "What you have grown" : "Crops";
+    }
+
+    /// <summary>Drop the composed Crops columns so the next compose rebuilds them. Called when
+    /// a setting behind the tab changes mid-session, which would otherwise not show until the
+    /// book was shut and reopened.</summary>
+    public void InvalidateCrops()
+    {
+        cropsColumns = null;
+        if (cropsMode && IsOpened()) ComposeSpread();
+    }
+
     public override void OnFinalizeFrame(float dt)
     {
         base.OnFinalizeFrame(dt);
@@ -1010,7 +1030,9 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
             catalog ??= CropCatalog.Build(capi);
             if (cropsColumns == null)
             {
-                cropsColumns = CropsRenderer.RenderPages(capi, catalog, getHomebase(), cropsSubColW, contentH);
+                var host = capi.ModLoader.GetModSystem<AlmanacIlluminatedModSystem>();
+                cropsColumns = CropsRenderer.RenderPages(capi, catalog, getHomebase(), cropsSubColW, contentH,
+                    host?.CropFamiliarity, host?.CropMarks ?? GrowthMarksStyle.Tally);
                 PrefixHomebaseNote(cropsColumns);
             }
             int maxSpread = System.Math.Max(0, (cropsColumns.Count - 1) / CropsColsPerSpread);
@@ -1146,7 +1168,7 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         if (bookmarkTag != null) children.Add(bookmarkTag);
         bgBounds.WithChildren(children.ToArray());
 
-        string title = weatherMode ? "Weather" : cropsMode ? "Crops" : journalMode ? "Journal"
+        string title = weatherMode ? "Weather" : cropsMode ? CropsTitle() : journalMode ? "Journal"
             : externalTab != null ? externalTab.Label
             : (current != null ? library.Title(current) : "The Almanac");
         physChapterTitle = title;   // the physical header band draws it (running heads)
