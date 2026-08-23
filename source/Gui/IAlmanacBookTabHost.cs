@@ -11,4 +11,10 @@ public interface IAlmanacBookTabHost
     /// <summary>Rebuild the active tab's columns and redraw, landing on the first
     /// spread. Call after the tab changes what it wants to show.</summary>
     void Recompose();
+
+    /// <summary>Rebuild and land on a specific spread (clamped to the rebuilt count) —
+    /// the seam a tab's own navigation uses to turn straight to a known page (the
+    /// Callings ladder's click-to-jump). Default falls back to the first spread so
+    /// hosts written before this seam keep working.</summary>
+    void Recompose(int spreadIndex) => Recompose();
 }

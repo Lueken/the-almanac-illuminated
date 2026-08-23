@@ -46,6 +46,14 @@ public class AlmanacIlluminatedModSystem : ModSystem
     /// <summary>Pause the singleplayer world while the book is open. Default on; the book
     /// exists to be read, and reading should not cost daylight.</summary>
     private bool pauseOnOpen = true;
+
+    // Local-illumination shading: the book renders by the light actually reaching the
+    // reader (on by default; `.almbook light off` opts out). The floor is the book's
+    // brightness in total darkness. Technique adapted from the Scribe mod (MIT) — see
+    // AmbientLightSampler.cs for the full attribution.
+    private bool respectWorldLight = true;
+    private float illuminationFloor = IlluminationCurve.DefaultFloor;
+    private AmbientLightSampler? lightSampler;
     private static string SettingsPath => System.IO.Path.Combine(
         Vintagestory.API.Config.GamePaths.DataPath, "ModData", "almanacilluminated", "settings.json");
 
@@ -305,6 +313,15 @@ public class AlmanacIlluminatedModSystem : ModSystem
         LoadSettings();
         physicalView = new PhysicalBookView(api);
         ApplyLoadedKnobs();   // LoadSettings ran before this existed; hand it the saved tuning now
+        IlluminatedLogger.Info(api, "light",
+            $"Local-illumination shading {(respectWorldLight ? "on" : "off")}, floor {illuminationFloor:0.00}");
+
+        // Warm pagination (Jeffrey's ask, 2026-08-22): the first Alt+J used to pay the
+        // whole library's Cairo pagination as one freeze. Instead, once the world has
+        // finalized (when every mod is loading things anyway), paginate one chapter per
+        // chained callback until the cache is warm. Opening the book early just stops
+        // the chain and takes the remaining cost the old way.
+        api.Event.LevelFinalize += () => api.Event.RegisterCallback(_ => WarmPaginateStep(api), 1500);
         physicalView.OnCaptureUnavailable = OnCaptureUnavailable;
         api.Event.RegisterRenderer(physicalView, EnumRenderStage.Ortho, "almanacilluminated-bookview");
 
@@ -313,7 +330,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         api.Input.SetHotKeyHandler(PresentationHotkeyCode, _ => { TogglePresentation(); return true; });
 
         api.ChatCommands.Create("almbook")
-            .WithDescription("Almanac presentation. No args: report. Args: physical | flat, pause [on|off] (singleplayer reading pause), or a physical-book knob: framing (tilt|yaw|dist|scale|fov|height <n>), page bend (bend|stiff|lead|corner <n>), leafing-through (flipslow|flipfast|flipcurl|flipscale|flipmax <n>, flippaper <0|1>), model <0|1>, reset. Knobs save as you set them.")
+            .WithDescription("Almanac presentation. No args: report. Args: physical | flat, pause [on|off] (singleplayer reading pause), light [on|off|floor <n>] (read by the world's light), or a physical-book knob: framing (tilt|yaw|dist|scale|fov|height <n>), page bend (bend|stiff|lead|corner <n>), leafing-through (flipslow|flipfast|flipcurl|flipscale|flipmax <n>, flippaper <0|1>), model <0|1>, reset. Knobs save as you set them.")
             .WithArgs(api.ChatCommands.Parsers.OptionalAll("arg"))
             .HandleWith(OnBookCommand);
 
@@ -442,6 +459,26 @@ public class AlmanacIlluminatedModSystem : ModSystem
     /// here — a dialog built anywhere else would miss the physical mirror and
     /// silently open flat.
     /// </summary>
+    /// <summary>One step of the post-LevelFinalize warm pagination: build the dialog if
+    /// it does not exist yet, paginate one chapter, and reschedule while work remains.
+    /// Stands down the moment the book is actually open (the user got there first, and
+    /// ComposeSpread's own path owns the cache from then on).</summary>
+    private void WarmPaginateStep(ICoreClientAPI api)
+    {
+        try
+        {
+            EnsureDialog();
+            if (bookDialog == null || bookDialog.IsOpened()) return;
+            int left = bookDialog.WarmPaginate(UsePhysical);
+            if (left > 0) api.Event.RegisterCallback(_ => WarmPaginateStep(api), 40);
+            else IlluminatedLogger.Info(api, "book", "Warm pagination complete; first open is prepaid");
+        }
+        catch (System.Exception e)
+        {
+            IlluminatedLogger.Warn(api, "book", $"Warm pagination stopped: {e.Message}");
+        }
+    }
+
     private void EnsureDialog()
     {
         if (bookDialog != null || capi == null) return;
@@ -465,6 +502,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
             clientChannel?.SendPacket(new ReadingState { Reading = reading });
         };
         bookDialog.PhysicalMirror = physicalView;
+        lightSampler ??= new AmbientLightSampler(capi, () => illuminationFloor);
+        bookDialog.LightSampler = lightSampler;
+        bookDialog.LightEnabled = () => respectWorldLight;
         bookDialog.OnOpened += () => capi?.World.Player.Entity.AnimManager.StartAnimation(ReadingAnimCode);
         bookDialog.OnClosed += () =>
         {
@@ -565,7 +605,12 @@ public class AlmanacIlluminatedModSystem : ModSystem
         {
             if (!System.IO.File.Exists(SettingsPath)) return;
             var cfg = Newtonsoft.Json.JsonConvert.DeserializeObject<BookSettings>(System.IO.File.ReadAllText(SettingsPath));
-            if (cfg != null) { physicalPreferred = cfg.Physical; pauseOnOpen = cfg.PauseOnOpen; loadedKnobs = cfg; }
+            if (cfg != null)
+            {
+                physicalPreferred = cfg.Physical; pauseOnOpen = cfg.PauseOnOpen; loadedKnobs = cfg;
+                respectWorldLight = cfg.RespectLight ?? true;
+                illuminationFloor = IlluminationCurve.ClampFloor(cfg.LightFloor ?? IlluminationCurve.DefaultFloor);
+            }
         }
         catch (Exception e)
         {
@@ -578,7 +623,13 @@ public class AlmanacIlluminatedModSystem : ModSystem
         try
         {
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SettingsPath)!);
-            var cfg = new BookSettings { Physical = physicalPreferred, PauseOnOpen = pauseOnOpen };
+            var cfg = new BookSettings
+            {
+                Physical = physicalPreferred,
+                PauseOnOpen = pauseOnOpen,
+                RespectLight = respectWorldLight,
+                LightFloor = illuminationFloor,
+            };
             if (physicalView != null)
             {
                 var p = physicalView;
@@ -639,6 +690,12 @@ public class AlmanacIlluminatedModSystem : ModSystem
         /// keep the days moving). Saved but inert in multiplayer.</summary>
         public bool PauseOnOpen = true;
 
+        /// <summary>Shade the book by the light reaching the reader (`.almbook light`).
+        /// Nullable like the knobs below: absent = the shipped default (on).</summary>
+        public bool? RespectLight;
+        /// <summary>Book brightness in total darkness (`.almbook light floor`).</summary>
+        public float? LightFloor;
+
         // Framing, bend and flip knobs. Nullable on purpose: absent means "use the shipped
         // default", which is what lets a new knob ship without rewriting everyone's file.
         public float? Tilt, Yaw, Dist, Scale, Fov, Height;
@@ -646,6 +703,56 @@ public class AlmanacIlluminatedModSystem : ModSystem
         public float? FlipSlow, FlipFast, FlipCurl, FlipScale;
         public int? FlipMax;
         public bool? FlipPaper;
+    }
+
+    /// <summary>
+    /// .almbook light — report, toggle, or set the darkness floor of the
+    /// local-illumination shading (the book lit by the light reaching the reader).
+    /// The no-arg report includes a live sampler snapshot, so the curve can be
+    /// judged against real numbers instead of guessed.
+    /// </summary>
+    private TextCommandResult OnLightCommand(string[] parts)
+    {
+        if (capi == null) return TextCommandResult.Error("Client API unavailable");
+
+        if (parts.Length < 2)
+        {
+            string state = respectWorldLight
+                ? $"The book reads by the world's light (floor {illuminationFloor:0.00}). '.almbook light off' keeps it always bright."
+                : "The book is always fully lit. '.almbook light on' reads by the world's light.";
+            return TextCommandResult.Success($"{state}\n{AmbientLightSampler.Describe(capi, illuminationFloor)}");
+        }
+
+        string sub = parts[1].ToLowerInvariant();
+        switch (sub)
+        {
+            case "on":
+            case "off":
+                respectWorldLight = sub == "on";
+                lightSampler?.ResetSmoothing();
+                SaveSettings();
+                IlluminatedLogger.Info(capi, "light",
+                    $"Local-illumination shading {(respectWorldLight ? "on" : "off")}");
+                return TextCommandResult.Success(respectWorldLight
+                    ? "The book now reads by the light that reaches you."
+                    : "The book now ignores the world's light.");
+            case "floor":
+                if (parts.Length < 3 || !float.TryParse(parts[2],
+                        System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out float f))
+                {
+                    return TextCommandResult.Error(
+                        $"Usage: .almbook light floor <{IlluminationCurve.MinFloor:0.00}..{IlluminationCurve.MaxFloor:0.0}> (currently {illuminationFloor:0.00})");
+                }
+                illuminationFloor = IlluminationCurve.ClampFloor(f);
+                SaveSettings();
+                IlluminatedLogger.Info(capi, "light", $"Illumination floor set to {illuminationFloor:0.00}");
+                return TextCommandResult.Success(
+                    $"In total darkness the book now renders at {illuminationFloor * 100f:0}% brightness.");
+            default:
+                return TextCommandResult.Error(
+                    "Usage: .almbook light | .almbook light on|off | .almbook light floor <n>");
+        }
     }
 
     /// <summary>
@@ -682,6 +789,8 @@ public class AlmanacIlluminatedModSystem : ModSystem
                 return TextCommandResult.Success($"Reset. {physicalView.Describe()}");
             case "hand":
                 return OnHandKnob(parts);
+            case "light":
+                return OnLightCommand(parts);
             case "pause":
             {
                 if (parts.Length < 2)
@@ -707,7 +816,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
                 System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v))
         {
             return TextCommandResult.Error(
-                "Usage: .almbook | .almbook physical|flat | .almbook pause [on|off] | .almbook tilt|yaw|dist|scale|fov|height <n> | .almbook bend|stiff|lead|corner <n> | .almbook flipslow|flipfast|flipcurl|flipscale|flipmax <n> | .almbook flippaper <0|1> | .almbook model <0|1> | .almbook reset");
+                "Usage: .almbook | .almbook physical|flat | .almbook pause [on|off] | .almbook light [on|off|floor <n>] | .almbook tilt|yaw|dist|scale|fov|height <n> | .almbook bend|stiff|lead|corner <n> | .almbook flipslow|flipfast|flipcurl|flipscale|flipmax <n> | .almbook flippaper <0|1> | .almbook model <0|1> | .almbook reset");
         }
 
         switch (verb)

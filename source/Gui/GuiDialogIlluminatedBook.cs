@@ -61,6 +61,18 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
 
     private bool InPhysicalMode => PhysicalMirror?.Active == true;
 
+    /// <summary>Local-illumination shading: the book renders by the light actually reaching
+    /// the reader. Both set by the mod system; null sampler or a false gate = neutral. The
+    /// capture pass is never shaded — physical mode applies the shade at draw time instead,
+    /// so the two presentations cannot double-tint.</summary>
+    public AmbientLightSampler? LightSampler;
+    public Func<bool>? LightEnabled;
+    private bool LightActive => LightSampler != null && LightEnabled?.Invoke() != false;
+
+    /// <summary>2×2 white texture the flat-mode multiply quad renders with (lazily built,
+    /// lives across opens, freed in <see cref="Dispose"/>).</summary>
+    private LoadedTexture? shadeWhiteTex;
+
     /// <summary>Physical mode layers the book with the dialog stack, above chat and other huds.</summary>
     public override double DrawOrder => InPhysicalMode ? 0.89 : base.DrawOrder;
 
@@ -69,11 +81,40 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         if (InPhysicalMode)
         {
             // The flat draw is replaced by the captured tilted page, drawn here
-            // so it inherits this dialog's position in the render order.
+            // so it inherits this dialog's position in the render order. The ambient
+            // shade rides along so the modeled book is lit by the reader's light.
+            var shade = LightActive ? LightSampler!.Sample(deltaTime) : AmbientLightSampler.Shade.Neutral;
+            PhysicalMirror!.SetAmbientShade(shade.R, shade.G, shade.B);
             PhysicalMirror!.DrawLive(deltaTime);
             return;
         }
         base.OnRenderGUI(deltaTime);
+        if (LightActive) DrawAmbientShade(LightSampler!.Sample(deltaTime));
+    }
+
+    /// <summary>Flat-mode shade: one multiply-blended quad over the composed dialog, so
+    /// everything beneath it — page, frame, text, hover — darkens and warms together
+    /// without recomposing any of it (dst × shade per channel).</summary>
+    private void DrawAmbientShade(AmbientLightSampler.Shade shade)
+    {
+        if (shade.R >= 0.995f && shade.G >= 0.995f && shade.B >= 0.995f) return;
+        var bounds = SingleComposer?.Bounds;
+        if (bounds == null) return;
+
+        if (shadeWhiteTex == null)
+        {
+            var tex = new LoadedTexture(capi, 0, 2, 2);
+            int w = unchecked((int)0xFFFFFFFF);
+            capi.Render.LoadOrUpdateTextureFromBgra(new[] { w, w, w, w }, false, 0, ref tex);
+            shadeWhiteTex = tex;
+        }
+
+        capi.Render.GlToggleBlend(true, EnumBlendMode.Multiply);
+        capi.Render.Render2DTexture(shadeWhiteTex.TextureId,
+            (float)bounds.renderX, (float)bounds.renderY,
+            (float)bounds.OuterWidth, (float)bounds.OuterHeight, 60f,
+            new Vec4f(shade.R, shade.G, shade.B, 1f));
+        capi.Render.GlToggleBlend(true);
     }
 
     /// <summary>Renders the composers for the physical view's capture pass, bypassing the suppression above.</summary>
@@ -204,6 +245,16 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     private ImageSurface? frameSurface;              // the book art, loaded once per open
     private int soundCounter;                        // rotates the three page-turn sounds
     private int leftPageNum = -1, rightPageNum = -1;  // codex footer numbers, -1 hides one
+
+    /// <summary>The content dims the chapter cache was paginated at. A compose whose dims
+    /// differ (warm pagination guessed the wrong presentation, a mode toggle, a resize)
+    /// drops the cache rather than serving pages laid out for another width.</summary>
+    private double cacheContentW = -1, cacheContentH = -1;
+
+    /// <summary>When positive, the folio prints "n of N" instead of the bare numeral —
+    /// external tab pages count within their own view (a calling's detail reads
+    /// "2 of 6"), where a chapter counts across the whole codex. -1 = bare numeral.</summary>
+    private int footerPageTotal = -1;
     private GuiElementPageCorners? corners;          // the page-turn animation overlay
 
     // The book art is a fixed-aspect plate; pages and margins are mapped onto it as
@@ -247,6 +298,16 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     {
         externalColumns = null;
         spreadIndex = 0;
+        if (IsOpened()) ComposeSpread();
+    }
+
+    /// <summary>Recompose landing on a chosen spread. The rebuild inside ComposeSpread
+    /// clamps the index against the freshly built column count, so a stale target from
+    /// the tab's previous layout can never page past the end.</summary>
+    public void Recompose(int targetSpread)
+    {
+        externalColumns = null;
+        spreadIndex = System.Math.Max(0, targetSpread);
         if (IsOpened()) ComposeSpread();
     }
 
@@ -382,6 +443,9 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     public override void OnGuiOpened()
     {
         base.OnGuiOpened();
+        // Adopt the current light directly on open, instead of gliding over from
+        // whatever the light was when the book was last closed.
+        LightSampler?.ResetSmoothing();
         // A fresh open is not a navigation. Without this the first compose would
         // measure against wherever the book was left last time and leaf through on
         // arrival, over a capture belonging to the previous session of reading.
@@ -782,6 +846,70 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         cols[0] = lead.ToArray();
     }
 
+    /// <summary>Paginate ONE not-yet-cached (or stale-sig) chapter while the book is
+    /// closed, so the whole library is warm before the first Alt+J — the mod system
+    /// chains this across frames after LevelFinalize instead of paying the full
+    /// pagination as one first-open freeze. Returns how many chapters still need work.
+    ///
+    /// The dims replicate ComposeSpread's math for the EXPECTED presentation
+    /// (<paramref name="physical"/> = the mod system's UsePhysical); if the guess is
+    /// wrong or the source math drifts, the dim guard in ComposeSpread drops the warm
+    /// cache and the first open simply pays the old cost — never wrong pages.</summary>
+    public int WarmPaginate(bool physical)
+    {
+        if (library.Ordered.Count == 0) return 0;
+
+        double scale = RuntimeEnv.GUIScale <= 0 ? 1 : RuntimeEnv.GUIScale;
+        double screenW = capi.Render.FrameWidth / scale;
+        double screenH = capi.Render.FrameHeight / scale;
+        double availW = screenW * ScreenFraction;
+        double availH = screenH * ScreenFraction;
+        double bookW, bookH;
+        if (availW / availH > FrameAspect) { bookH = availH; bookW = bookH * FrameAspect; }
+        else { bookW = availW; bookH = bookW / FrameAspect; }
+        const double screenPad = 8;
+        bool hasTabs = library.Ordered.Count > 0 || externalTabs.Count > 0 || library.RibbonChapters.Count > 0;
+        double tabMargin = physical ? 12 : hasTabs
+            ? System.Math.Min(TabMarginMax, System.Math.Max(TabMarginMin, (screenW - screenPad - bookW) / 2))
+            : 0;
+        if (bookW + 2 * tabMargin > screenW - screenPad)
+        {
+            bookW = screenW - screenPad - 2 * tabMargin;
+            bookH = bookW / FrameAspect;
+        }
+        double fxTop = physical ? 0.06 : FxContentTop;
+        double fxBottom = physical ? 0.95 : FxContentBottom;
+        double contentW = ((physical ? 0.472 : FxLeftR) - (physical ? 0.045 : FxLeftL)) * bookW;
+        double contentH = (fxBottom - fxTop) * bookH;
+
+        if (cache != null && (System.Math.Abs(cacheContentW - contentW) > 0.5
+            || System.Math.Abs(cacheContentH - contentH) > 0.5))
+        {
+            cache = null;
+            cacheRevealSig = null;
+        }
+        cache ??= new Dictionary<GuidePack, List<RichTextComponentBase[]>>();
+        cacheRevealSig ??= new Dictionary<GuidePack, string>();
+        cacheContentW = contentW;
+        cacheContentH = contentH;
+
+        int remaining = 0;
+        GuidePack? next = null;
+        foreach (var ch in library.Ordered)
+        {
+            bool fresh = cache.ContainsKey(ch)
+                && cacheRevealSig.TryGetValue(ch, out string? s) && s == RevealSig(ch);
+            if (!fresh) { next ??= ch; remaining++; }
+        }
+        if (next != null)
+        {
+            cache[next] = ChapterRenderer.RenderPages(capi, next, library, OnLinkClicked, contentW, contentH);
+            cacheRevealSig[next] = RevealSig(next);
+            remaining--;
+        }
+        return remaining;
+    }
+
     private void ComposeSpread()
     {
         // Size the book to a fraction of the screen. GUI bounds are unscaled
@@ -834,6 +962,17 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         double colH = (fxBottom - fxTop) * bookH;
         double contentW = colW;
         double contentH = colH;
+
+        // Pages paginated for other dims must never be served: a warm pass that guessed
+        // the wrong presentation, a physical/flat toggle, or a resize re-renders instead.
+        if (cache != null && (System.Math.Abs(cacheContentW - contentW) > 0.5
+            || System.Math.Abs(cacheContentH - contentH) > 0.5))
+        {
+            cache = null;
+            cacheRevealSig = null;
+        }
+        cacheContentW = contentW;
+        cacheContentH = contentH;
 
         // The Crops tab splits each page into two narrow columns (four across a spread).
         double cropsSubGap = colW * 0.06;
@@ -1227,6 +1366,7 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     /// </summary>
     private void ComputeFooterNumbers(int leftIdx, int rightIdx)
     {
+        footerPageTotal = -1;
         if (journalMode)
         {
             leftPageNum = spreadIndex * 2 + 1;
@@ -1252,6 +1392,8 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
             int total = externalColumns?.Count ?? 0;
             leftPageNum = spreadIndex * 2 + 1;
             rightPageNum = spreadIndex * cps + cps / 2 < total ? spreadIndex * 2 + 2 : -1;
+            // Pages in THIS view: one page per column at cps 2, two columns per page at 4.
+            footerPageTotal = System.Math.Max(1, cps == 2 ? total : (total + 1) / 2);
             return;
         }
         if (current == null || cache == null || pages == null || library.OrderIndex(current) < 0)
@@ -1454,9 +1596,13 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
             ctx.ShowText(g);
         }
 
-        var numFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithFontSize(13f).WithColor(new[] { 0.28, 0.18, 0.10, 0.70 });
-        if (leftPageNum > 0) Glyph(numFont, leftPageNum.ToString(), (FxLeftL + FxLeftR) / 2, numY);
-        if (rightPageNum > 0) Glyph(numFont, rightPageNum.ToString(), (FxRightL + FxRightR) / 2, numY);
+        // An external tab's folio counts within its own view ("2 of 6"), a bit larger
+        // than the bare codex numeral so the position reads at a glance.
+        var numFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody)
+            .WithFontSize(footerPageTotal > 0 ? 15f : 13f).WithColor(new[] { 0.28, 0.18, 0.10, 0.70 });
+        string FolioText(int n) => footerPageTotal > 0 ? $"{n} of {footerPageTotal}" : n.ToString();
+        if (leftPageNum > 0) Glyph(numFont, FolioText(leftPageNum), (FxLeftL + FxLeftR) / 2, numY);
+        if (rightPageNum > 0) Glyph(numFont, FolioText(rightPageNum), (FxRightL + FxRightR) / 2, numY);
 
         // Faint turn cues in the bottom-outer corners, only where a turn exists.
         var cueFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithFontSize(20f).WithColor(new[] { 0.28, 0.18, 0.10, 0.28 });
@@ -1618,8 +1764,12 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         string rightHead = physChapterTitle == "The Almanac" ? "Illvminated" : physChapterTitle;
         Head(ChapterRenderer.SmallCaps("The Almanac"), leftCx);
         Head(ChapterRenderer.SmallCaps(rightHead), rightCx);
-        Foot($"· {spreadIndex * 2 + 1} ·", leftCx);
-        Foot($"· {spreadIndex * 2 + 2} ·", rightCx);
+        // Foot numerals come from ComputeFooterNumbers (already run this compose),
+        // not raw spreadIndex math — an external tab counts within its own view
+        // ("5 of 6") and a blank right page hides its numeral entirely.
+        string FolioText(int n) => footerPageTotal > 0 ? $"{n} of {footerPageTotal}" : $"· {n} ·";
+        if (leftPageNum > 0) Foot(FolioText(leftPageNum), leftCx);
+        if (rightPageNum > 0) Foot(FolioText(rightPageNum), rightCx);
     }
 
     private ImageSurface? TryLoadFrame()
@@ -1744,6 +1894,13 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         frameSurface?.Dispose();
         frameSurface = null;
         base.OnGuiClosed();
+    }
+
+    public override void Dispose()
+    {
+        shadeWhiteTex?.Dispose();
+        shadeWhiteTex = null;
+        base.Dispose();
     }
 
     public override bool PrefersUngrabbedMouse => true;

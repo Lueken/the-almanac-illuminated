@@ -38,6 +38,14 @@ public interface IPhysicalMirror
     /// </summary>
     void DrawLive(float deltaTime);
 
+    /// <summary>
+    /// The ambient shade every physical draw is multiplied by this frame (final
+    /// per-channel multipliers, 1,1,1 = neutral). Set by the dialog right before
+    /// DrawLive; the capture itself stays unshaded, so the shade is applied
+    /// exactly once whichever presentation renders.
+    /// </summary>
+    void SetAmbientShade(float r, float g, float b);
+
     /// <summary>True while the stow-away close animation runs.</summary>
     bool Closing { get; }
 
@@ -1647,6 +1655,16 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     /// only when they weren't handed an active gui shader, and GL state is
     /// never flipped back "on" behind the engine's back.
     /// </summary>
+    // Ambient shade (local illumination): final per-channel multipliers folded into every
+    // DrawMesh, so the whole modeled book — spine, pages, sheet, scraps, tabs, labels —
+    // darkens and warms as one object under the reader's light. Neutral by default.
+    private float ambientR = 1f, ambientG = 1f, ambientB = 1f;
+
+    public void SetAmbientShade(float r, float g, float b)
+    {
+        ambientR = r; ambientG = g; ambientB = b;
+    }
+
     private void DrawMesh(MeshRef mesh, int texId, float[] modelView, int normalShaded, Vec4f? tint = null)
     {
         var r = capi.Render;
@@ -1657,8 +1675,8 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
         r.GlToggleBlend(true);
 
         prog.RgbaIn = tint == null
-            ? new Vec4f(1f, 1f, 1f, easeFade)
-            : new Vec4f(tint.X, tint.Y, tint.Z, tint.W * easeFade);
+            ? new Vec4f(ambientR, ambientG, ambientB, easeFade)
+            : new Vec4f(tint.X * ambientR, tint.Y * ambientG, tint.Z * ambientB, tint.W * easeFade);
         prog.ExtraGlow = 0;
         prog.ApplyColor = 0;
         prog.NoTexture = 0f;
