@@ -263,7 +263,7 @@ public static class CropsRenderer
         // A tier removes lines from the bottom; it never rearranges them. The kind is not
         // labelled, because every card sits under a heading that already names it.
         if (e.Produce != null)
-            comps.Add(new ItemstackTextComponent(capi, e.Produce, 40, 6, EnumFloat.Left));
+            comps.Add(new ItemstackTextComponent(capi, FreshIcon(capi, e.Produce), 40, 6, EnumFloat.Left));
 
         string source = e.Vanilla ? "vanilla" : capi.ModLoader.GetMod(e.SourceDomain)?.Info?.Name ?? e.SourceDomain;
         comps.Add(new RichTextComponent(capi, e.DisplayName + "  ", stranger ? f.NameFaint : f.Name));
@@ -345,6 +345,27 @@ public static class CropsRenderer
 
         comps.Add(new GrowthMarksComponent(capi, GrowthMarksStyle.Tally, st.CropId, own, kin, cap, 0));
         comps.Add(new RichTextComponent(capi, "\n", f.Muted));
+    }
+
+    /// <summary>
+    /// A drawing in a book does not go off.
+    ///
+    /// The catalogue's stacks are built once and held for the session. A perishable stack
+    /// carries a `transitionstate` tree recording the world hour it was created, and the game
+    /// stamps that on first render, so after a few in-game weeks every plate on the page read
+    /// as rotten: spoiled textures, and a hover saying "100% spoiled, 0 sat". Passing a season
+    /// in one sitting turned the whole catalogue to compost.
+    ///
+    /// Each card draws a clone with that tree stripped, which is the state a freshly made item
+    /// is in, so the game stamps it at the current hour as it renders. Rebuilt on every open,
+    /// so it never ages. The stack stays a real stack, which is what keeps the hover tooltip:
+    /// the two are independent, and fixing the rot costs nothing on the mouseover.
+    /// </summary>
+    private static ItemStack FreshIcon(ICoreClientAPI capi, ItemStack stack)
+    {
+        var icon = stack.Clone();
+        icon.Attributes?.RemoveAttribute("transitionstate");
+        return icon;
     }
 
     private static string MaskedName(CropKind k) => k switch
