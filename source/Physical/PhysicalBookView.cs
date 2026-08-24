@@ -1200,7 +1200,9 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
                 var prevFb = r.CurrentFrameBuffer;
                 r.CurrentFrameBuffer = fbo;
                 r.ClearFrameBuffer(fbo, ClearTransparent);
-                liveDialog.RenderForCapture(deltaTime);
+                PointMouseAtPage();
+                try { liveDialog.RenderForCapture(deltaTime); }
+                finally { RestoreMouse(); }
                 r.CurrentFrameBuffer = prevFb;   // null setter re-binds the default buffer; viewport already window-sized
             }
             catch (Exception e)
@@ -1702,6 +1704,59 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     /// </summary>
     /// <summary>Raw page-space hit (unclamped): the scrap zone above the top
     /// edge (pageY 1.0..~1.25) hit-tests through this.</summary>
+    // ---------------------------------------------------------------- raw-mouse components
+    //
+    // The dialog remaps the mouse on the events it receives, and every element this mod wrote
+    // reads those event coords (see the note in GuiElementChapterTabs). Vanilla elements do
+    // not: ItemstackTextComponent's hover tooltip hit-tests api.Input.MouseX/MouseY straight
+    // out of the game, so it compares a real screen point against the flat page coordinates
+    // the composers were laid out in. On a tilted book those disagree by the whole transform,
+    // which is why hovering one crop card raised the tooltip of another (found in play
+    // 2026-08-23 on the Crops tab; it was never crop-specific, it is every hoverable in the
+    // physical book).
+    //
+    // The capture pass is the one place all of them run, so the mouse is pointed at the
+    // remapped page position for exactly that long and put straight back. Off the page it is
+    // parked far outside the dialog, so nothing hovers rather than something arbitrary
+    // hovering. Restored in a finally: leaving the game's mouse moved would be a far worse
+    // bug than the one being fixed.
+
+    private int savedMouseX, savedMouseY;
+    private bool mousePointed;
+
+    private void PointMouseAtPage()
+    {
+        var client = capi.World as ClientMain;
+        if (client == null) return;
+
+        savedMouseX = client.MouseCurrentX;
+        savedMouseY = client.MouseCurrentY;
+        mousePointed = true;
+
+        const int parked = -10000;
+        if (TryRemap(savedMouseX, savedMouseY, out int rx, out int ry))
+        {
+            client.MouseCurrentX = rx;
+            client.MouseCurrentY = ry;
+        }
+        else
+        {
+            client.MouseCurrentX = parked;
+            client.MouseCurrentY = parked;
+        }
+    }
+
+    private void RestoreMouse()
+    {
+        if (!mousePointed) return;
+        mousePointed = false;
+        if (capi.World is ClientMain client)
+        {
+            client.MouseCurrentX = savedMouseX;
+            client.MouseCurrentY = savedMouseY;
+        }
+    }
+
     public bool TryRemapRaw(int mx, int my, out float pageX, out float pageY)
     {
         pageX = 0f; pageY = 0f;
