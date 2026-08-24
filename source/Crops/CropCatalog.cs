@@ -95,45 +95,64 @@ public static class CropCatalog
 
     private static List<CropEntry> BuildSeedCrops(ICoreClientAPI capi)
     {
-        // One entry per species. The ripe stage carries the produce drop, so the highest
-        // stage wins; an unsized block always beats a breeding varietal, because vanilla's
-        // own block is the one that names the plant plainly.
-        var bestByType = new Dictionary<string, (Block block, int stage, bool sized)>(StringComparer.OrdinalIgnoreCase);
+        // One entry per species, built from whichever of that species' blocks can actually
+        // name its produce.
+        //
+        // Preference order is unsized block, then highest stage, then code, but it is only a
+        // PREFERENCE and the loop falls through when a block yields nothing. That fallthrough
+        // is the whole point. Art of Growing adds a size variantgroup to vanilla's own crop
+        // file and points its drops at `artofgrowing:vegetable-{size}-cabbage`, which leaves a
+        // vestigial unsized block behind whose drop still carries the literal {size} and
+        // cannot resolve. Preferring it and stopping there lost cabbage, turnip, onion,
+        // parsnip and carrot from the catalogue entirely, and left them showing as one "Rot"
+        // and one "Dry grass" card once dedupe had collapsed the byproducts they fell back to.
+        var byType = new Dictionary<string, List<(Block block, int stage, bool sized)>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var block in capi.World.Blocks)
         {
             if (block?.CropProps == null || block.Code == null) continue;
             if (!TryParseCrop(block.Code, out string typeKey, out int stage, out bool sized)) continue;
 
-            if (!bestByType.TryGetValue(typeKey, out var cur)
-                || (cur.sized && !sized)
-                || (cur.sized == sized && stage > cur.stage))
-                bestByType[typeKey] = (block, stage, sized);
+            if (!byType.TryGetValue(typeKey, out var list)) byType[typeKey] = list = new();
+            list.Add((block, stage, sized));
         }
 
         var entries = new List<CropEntry>();
-        foreach (var (typeKey, (block, _, _)) in bestByType)
+        foreach (var (typeKey, candidates) in byType)
         {
-            string type = typeKey.Substring(typeKey.IndexOf(':') + 1);
-            var produce = ResolveProduce(capi, block, type);
-            if (produce?.Collectible?.Code == null) continue;   // no readable produce: skip rather than show a blank
-
-            var cp = block.CropProps;
-            entries.Add(new CropEntry
+            candidates.Sort((a, b) =>
             {
-                Kind = CropKind.SeedCrop,
-                ProduceCode = produce.Collectible.Code.ToString(),
-                DisplayName = produce.GetName(),
-                SourceDomain = produce.Collectible.Code.Domain,   // the food's origin, so mod produce flags as modded
-                Produce = produce,
-                PlantBlock = block,
-                Nutrient = cp.RequiredNutrient,
-                ColdDamageBelow = cp.ColdDamageBelow,
-                HeatDamageAbove = cp.HeatDamageAbove,
-                TotalGrowthDays = cp.TotalGrowthMonths > 0 ? cp.TotalGrowthMonths * capi.World.Calendar.DaysPerMonth : cp.TotalGrowthDays,
-                GrowthStages = cp.GrowthStages,
-                MultipleHarvests = cp.MultipleHarvests,
+                int s = a.sized.CompareTo(b.sized);                 // unsized first
+                if (s != 0) return s;
+                int st = b.stage.CompareTo(a.stage);                // then ripest
+                if (st != 0) return st;
+                return string.CompareOrdinal(a.block.Code.Path, b.block.Code.Path);   // then stable
             });
+
+            string type = typeKey.Substring(typeKey.IndexOf(':') + 1);
+            foreach (var (block, _, _) in candidates)
+            {
+                var produce = ResolveProduce(capi, block, type);
+                if (produce?.Collectible?.Code == null) continue;   // this block cannot name it; try the next
+
+                var cp = block.CropProps;
+                entries.Add(new CropEntry
+                {
+                    Kind = CropKind.SeedCrop,
+                    ProduceCode = produce.Collectible.Code.ToString(),
+                    DisplayName = produce.GetName(),
+                    SourceDomain = produce.Collectible.Code.Domain,   // the food's origin, so mod produce flags as modded
+                    Produce = produce,
+                    PlantBlock = block,
+                    Nutrient = cp.RequiredNutrient,
+                    ColdDamageBelow = cp.ColdDamageBelow,
+                    HeatDamageAbove = cp.HeatDamageAbove,
+                    TotalGrowthDays = cp.TotalGrowthMonths > 0 ? cp.TotalGrowthMonths * capi.World.Calendar.DaysPerMonth : cp.TotalGrowthDays,
+                    GrowthStages = cp.GrowthStages,
+                    MultipleHarvests = cp.MultipleHarvests,
+                });
+                break;
+            }
         }
         return entries;
     }
@@ -165,6 +184,11 @@ public static class CropCatalog
 
         string type = path.Substring(5, dash - 5);    // between "crop-" and the trailing "-{stage}"
         if (type.Length == 0) return false;
+
+        // Second-year seed crops (crop-seed-{size}-onion) are the same plant grown on for
+        // seed, not another plant. The species already has a card, and letting these in put
+        // the onion's whole family under "Scallions", which is what a seed-onion drops.
+        if (type.StartsWith("seed-", StringComparison.OrdinalIgnoreCase)) return false;
 
         if (code.Domain.Equals("game", StringComparison.OrdinalIgnoreCase))
         {
@@ -203,10 +227,7 @@ public static class CropCatalog
             var stack = drop?.ResolvedItemstack;
             var collCode = stack?.Collectible?.Code?.Path;
             if (stack == null || collCode == null) continue;
-            if (collCode.StartsWith("seeds-", StringComparison.OrdinalIgnoreCase) ||
-                collCode.StartsWith("seed-", StringComparison.OrdinalIgnoreCase) ||
-                collCode.Contains("cutting", StringComparison.OrdinalIgnoreCase) ||
-                collCode.Contains("berrybush", StringComparison.OrdinalIgnoreCase)) continue;
+            if (IsNotProduce(collCode)) continue;
 
             var resolved = Canonicalise(capi, stack);
             first ??= resolved;
@@ -261,6 +282,25 @@ public static class CropCatalog
         }
         return stack;
     }
+
+    /// <summary>
+    /// The litter a harvest leaves that is not the harvest. Seeds and cuttings are how the
+    /// plant continues rather than what it gives, and rot, dry grass and thatch are what
+    /// falls off it. Filtering these is what stops a crop whose real produce cannot resolve
+    /// from being filed under "Rot": after dedupe on produce, five separate crops in that
+    /// state collapsed into one "Rot" card and one "Dry grass" card, and vanished from
+    /// their families.
+    /// </summary>
+    private static bool IsNotProduce(string path) =>
+        path.StartsWith("seeds-", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("seed-", StringComparison.OrdinalIgnoreCase) ||
+        path.Contains("cutting", StringComparison.OrdinalIgnoreCase) ||
+        path.Contains("berrybush", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("rot", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("drygrass", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("dryhay", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("thatch", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("firewood", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Drops one varietal-size segment from a dash-separated path, wherever it sits.</summary>
     private static string StripSizeSegment(string path)

@@ -39,12 +39,15 @@ public class GrowthMarksComponent : RichTextComponentBase
     private readonly double size;
 
     private const int PerGate = 5;
-    private const double UnStride = 3.4;     // between marks within a gate
-    private const double UnGateGap = 4.2;    // between gates
+    private const double UnStride = 4.6;     // between marks within a gate
+    private const double UnGateGap = 5.6;    // between gates
     private const double UnRuleWidth = 46;   // the fullness rule
 
-    private static readonly double[] Ink = { 0.13, 0.09, 0.05, 0.82 };
-    private static readonly double[] Kin = { 0.13, 0.09, 0.05, 0.52 };
+    // Struck in full ink. The first pass drew these at the weight of a hairline rule and
+    // they read as smudges on the parchment: a tally is the loudest thing on the card,
+    // because it is the one part the reader put there.
+    private static readonly double[] Ink = { 0.11, 0.07, 0.04, 1.00 };
+    private static readonly double[] Kin = { 0.13, 0.09, 0.05, 0.68 };
     private static readonly double[] Faint = { 0.13, 0.09, 0.05, 0.16 };
 
     /// <param name="cropId">Seeds the hand. Any stable per-crop string.</param>
@@ -53,7 +56,7 @@ public class GrowthMarksComponent : RichTextComponentBase
     /// <param name="capacity">Marks the gate holds before it is full (the Versed threshold).</param>
     /// <param name="fraction">Fullness mode only: 0 to 1 of the way to Versed.</param>
     public GrowthMarksComponent(ICoreClientAPI api, GrowthMarksStyle style, string cropId,
-        int whole, int half, int capacity, double fraction, double size = 9) : base(api)
+        int whole, int half, int capacity, double fraction, double size = 13) : base(api)
     {
         this.style = style;
         this.capacity = Math.Max(1, capacity);
@@ -131,7 +134,7 @@ public class GrowthMarksComponent : RichTextComponentBase
         double s = b.Height;
         double stride = GuiElement.scaled(UnStride);
         double gateGap = GuiElement.scaled(UnGateGap);
-        ctx.LineWidth = GuiElement.scaled(1.1);
+        ctx.LineWidth = GuiElement.scaled(1.8);
         ctx.LineCap = LineCap.Round;
 
         double x = b.X + s * 0.25;
@@ -140,7 +143,7 @@ public class GrowthMarksComponent : RichTextComponentBase
         for (int i = 0; i < n; i++)
         {
             bool kin = i >= whole;
-            double h = s * (kin ? 0.5 : 1.0);
+            double h = s * (kin ? 0.55 : 1.0);
             var col = kin ? Kin : Ink;
             ctx.SetSourceRGBA(col[0], col[1], col[2], col[3]);
 
@@ -149,7 +152,7 @@ public class GrowthMarksComponent : RichTextComponentBase
             {
                 // The fifth: struck across the four already standing, low left to high right.
                 double span = 3 * stride;
-                double lean = s * 0.14 * Wobble(i, 3);
+                double lean = s * 0.12 * Wobble(i, 3);
                 ctx.NewPath();
                 ctx.MoveTo(x - span - stride * 0.55, baseY - h * 0.12 + lean);
                 ctx.LineTo(x - stride * 0.15, baseY - h * 0.92 + lean);
@@ -178,7 +181,7 @@ public class GrowthMarksComponent : RichTextComponentBase
     {
         double s = b.Height;
         double y = b.Y + s * 0.72;
-        double thick = Math.Max(1, s * 0.20);
+        double thick = Math.Max(1.5, s * 0.24);
 
         ctx.LineWidth = thick;
         ctx.LineCap = LineCap.Round;

@@ -255,25 +255,29 @@ public static class CropsRenderer
 
         bool stranger = st != null && st.Tier == CropTier.Stranger;
 
+        // Card shape, fixed for every tier so a page of them reads as one hand:
+        //   the name, with its source shadowed beside it
+        //   the record of what you have grown, struck directly beneath
+        //   one line of facts: what it stands, how long it holds, what it feeds on
+        //   one line on when to sow it where you live
+        // A tier removes lines from the bottom; it never rearranges them. The kind is not
+        // labelled, because every card sits under a heading that already names it.
         if (e.Produce != null)
             comps.Add(new ItemstackTextComponent(capi, e.Produce, 40, 6, EnumFloat.Left));
 
         string source = e.Vanilla ? "vanilla" : capi.ModLoader.GetMod(e.SourceDomain)?.Info?.Name ?? e.SourceDomain;
         comps.Add(new RichTextComponent(capi, e.DisplayName + "  ", stranger ? f.NameFaint : f.Name));
-        comps.Add(new RichTextComponent(capi, $"{KindLabel(e.Kind)} · {source}\n", f.Muted));
+        comps.Add(new RichTextComponent(capi, source + "\n", f.Muted));
+
+        if (st != null) AddProgress(capi, comps, st, marks, f);
 
         if (e.Kind == CropKind.Mushroom)
         {
             comps.Add(new RichTextComponent(capi, "Foraged, not sown.\n", f.Window));
         }
-        else if (st == null)
+        else if (st == null || st.Tier == CropTier.Versed)
         {
-            // No familiarity for this entry: the plain card, the whole of it.
-            comps.Add(new RichTextComponent(capi, GrowingLine(e, true) + "\n", f.Body));
-            comps.Add(new RichTextComponent(capi, PlantingLine(capi, e, homebase) + "\n", f.Window));
-        }
-        else if (st.Tier == CropTier.Versed)
-        {
+            // No familiarity for this entry, or all of it earned: the figures, then the sowing.
             comps.Add(new RichTextComponent(capi, GrowingLine(e, true) + "\n", f.Body));
             comps.Add(new RichTextComponent(capi, PlantingLine(capi, e, homebase) + "\n", f.Window));
         }
@@ -288,8 +292,6 @@ public static class CropsRenderer
                 ? "Never grown. Its kin have taught you a little."
                 : "A stranger. Grow it once and the page begins.") + "\n", f.Voice));
         }
-
-        if (st != null) AddProgress(capi, comps, st, marks, f);
 
         // FG mid-learn. Unreachable while FG is absent, and left in so a pack that runs it
         // still sees its own progress rather than nothing.
