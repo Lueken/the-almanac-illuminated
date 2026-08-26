@@ -222,20 +222,35 @@ public static class ForageAtlas
         return dyes;
     }
 
-    /// <summary>A file's entries, whether it holds an array of them or a single one. Both
-    /// shapes occur in the base game's own assets.</summary>
+    /// <summary>
+    /// A file's entries, whether it holds an array of them or a single one. Both shapes occur
+    /// in the base game's own assets.
+    ///
+    /// The array read is tried first and is exactly what the blockpatch walk did before this
+    /// helper existed, so that path is unchanged. Only a file that is NOT an array reaches the
+    /// second read, and a file that is neither throws out of here into the caller's own
+    /// try/catch, which logs it and skips the file.
+    /// </summary>
     private static List<Vintagestory.API.Datastructures.JsonObject> Entries(IAsset asset)
     {
         var list = new List<Vintagestory.API.Datastructures.JsonObject>();
-        var token = asset.ToObject<Newtonsoft.Json.Linq.JToken>();
-        if (token is Newtonsoft.Json.Linq.JArray arr)
+        try
         {
-            foreach (var t in arr) list.Add(new Vintagestory.API.Datastructures.JsonObject(t));
+            var arr = asset.ToObject<Newtonsoft.Json.Linq.JArray>();
+            if (arr != null)
+            {
+                foreach (var t in arr) list.Add(new Vintagestory.API.Datastructures.JsonObject(t));
+                return list;
+            }
         }
-        else if (token != null)
+        catch (Exception)
         {
-            list.Add(new Vintagestory.API.Datastructures.JsonObject(token));
+            // Not an array. Swallowed rather than logged: the single-object read below is the
+            // ordinary other shape, not a fault, and if that fails too the caller reports it.
         }
+
+        var one = asset.ToObject<Newtonsoft.Json.Linq.JObject>();
+        if (one != null) list.Add(new Vintagestory.API.Datastructures.JsonObject(one));
         return list;
     }
 
