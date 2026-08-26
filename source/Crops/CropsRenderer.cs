@@ -102,7 +102,17 @@ public static class CropsRenderer
 
         foreach (var e in entries)
         {
-            if (e.Kind != CropKind.SeedCrop) { perennials.Add(e); continue; }
+            if (e.Kind != CropKind.SeedCrop)
+            {
+                // Perennials are grouped by kind rather than by family, but they still get a
+                // standing if the supplier tracks them. A standing with an empty FamilyId is
+                // the normal case here and must NOT fall through to `untracked` the way it
+                // does for a sown crop: these have no family by design, not by omission.
+                perennials.Add(e);
+                var pst = fam.Of(e);
+                if (pst != null) standing[e] = pst;
+                continue;
+            }
             var st = fam.Of(e);
             if (st == null || string.IsNullOrEmpty(st.FamilyId)) { untracked.Add(e); continue; }
             standing[e] = st;
@@ -152,7 +162,8 @@ public static class CropsRenderer
                 lastKind = e.Kind;
                 anyBefore = true;
             }
-            blocks.Add(Join(pending, BuildCard(capi, e, homebase, f, null, null, marks)));
+            standing.TryGetValue(e, out var pst);
+            blocks.Add(Join(pending, BuildCard(capi, e, homebase, f, pst, null, marks)));
             pending = null;
         }
 
@@ -197,25 +208,24 @@ public static class CropsRenderer
     /// <summary>
     /// Said once under a perennial heading and never on the cards beneath it.
     ///
-    /// Every one of these groups leaves familiarity at <see cref="BuildByFamily"/>'s first
-    /// line, so their cards arrive with no standing and no family and print whatever they
-    /// have outright. Next to a sown crop the reader has never grown, whose page is held
-    /// mostly shut, that looks like the book keeping secrets at random. It is not: nothing
-    /// in these groups is sown, so there is no growing of them to record and nothing to
-    /// hold back. Saying so once per group is what makes the asymmetry read as a rule.
+    /// The bush and tree notes used to explain why their pages stood open, because nothing in
+    /// those groups could be learned. Fruit familiarity made that false, so they now say the
+    /// rule that replaced it: a perennial is learned by PROPAGATING it, not by picking it.
+    /// That one sentence covers both gates. An orchard needs it said because wild trees can be
+    /// picked forever; a bush needs it said because a cutting only counts off one somebody has
+    /// already raised.
     ///
-    /// Not hidden instead of explained, deliberately. Until a fruit tree can earn its page
-    /// there is no way for a reader to win these figures back, and withholding what cannot
-    /// be earned is a loss dressed up as a reward.
+    /// The mushroom note is untouched and still true. Nothing plants a mushroom, so nothing
+    /// about it is learned, and that group's pages do still stand open for the old reason.
     /// </summary>
     private static string GroupNote(CropKind k) => k switch
     {
         CropKind.Mushroom =>
             "None of what follows is planted. It is only found, and what is found is never learned by sowing.\n",
         CropKind.BerryBush =>
-            "Bushes are gathered rather than sown. These pages stand open because there is no growing of them to set down.\n",
+            "A bush is known by raising one. Cuttings taken off a bush you set yourself are what fill these pages.\n",
         CropKind.FruitTree =>
-            "An orchard is grown, but not from seed and not in rows. Tending one raises your standing as a grower; it does not fill a page the way a sown crop does, so these stand open.\n",
+            "An orchard is known by planting it. A tree stays a stranger, however much of it you pick, until you have rooted or grafted a cutting of your own.\n",
         _ => "\n",
     };
 
@@ -348,9 +358,13 @@ public static class CropsRenderer
         }
         else
         {
-            comps.Add(new RichTextComponent(capi, (st.KinOnly
+            // The kin line cannot apply to a perennial: it carries no family, so EffectiveCount
+            // is its own count and KinOnly can never be true. Kept as an explicit kind test
+            // rather than relying on that, because the reason is not visible from here.
+            bool perennial = e.Kind != CropKind.SeedCrop;
+            comps.Add(new RichTextComponent(capi, (!perennial && st.KinOnly
                 ? "Never grown. Its kin have taught you a little."
-                : "A stranger. Grow it once and the page begins.") + "\n", f.Voice));
+                : StrangerLine(e.Kind)) + "\n", f.Voice));
         }
 
         // FG mid-learn. Unreachable while FG is absent, and left in so a pack that runs it
@@ -470,6 +484,21 @@ public static class CropsRenderer
         if (known && e.Kind == CropKind.SeedCrop)
             parts.Add($"needs {e.Nutrient}");
 
+        // The perennial figures, which are the reason the top tier is worth reaching. None of
+        // these appear anywhere in vanilla's own interface, on a hover or in the handbook.
+        if (known && e.Kind == CropKind.FruitTree)
+        {
+            if (e.Evergreen) parts.Add("evergreen");
+            else if (!float.IsNaN(e.VernalizationHours))
+                parts.Add($"needs {e.VernalizationHours:0}h under {e.VernalizationTemp:0}°");
+        }
+        else if (known && e.Kind == CropKind.BerryBush)
+        {
+            if (!float.IsNaN(e.DormantBelow)) parts.Add($"dormant under {e.DormantBelow:0}°");
+            if (!float.IsNaN(e.WakesAbove)) parts.Add($"wakes above {e.WakesAbove:0}°");
+            if (!float.IsNaN(e.DrawAtBest)) parts.Add($"draws {e.DrawAtBest:0.#} at its best");
+        }
+
         return string.Join(" · ", parts);
     }
 
@@ -481,10 +510,63 @@ public static class CropsRenderer
     /// </summary>
     private static string ShapeLine(ICoreClientAPI capi, CropEntry e)
     {
+        // A perennial has no CropProps and therefore no soil nutrient, so the hunger sentence
+        // below would print a default enum value as though it were a fact about the plant.
+        if (e.Kind != CropKind.SeedCrop) return PerennialShapeLine(capi, e);
+
         string hunger = $"It hungers for {e.Nutrient}.";
         string? second = FrostClause(e) ?? PaceClause(capi, e);
         if (second == null) return hunger;
         return hunger + " " + second;
+    }
+
+    /// <summary>
+    /// What a stranger's page promises, in the terms of the thing being grown.
+    ///
+    /// A sown crop is grown from seed and the promise is a harvest. A perennial is grown from
+    /// a piece of another plant, and both its ladders start at propagation rather than at a
+    /// pick: an orchard because wild trees can be picked forever, a bush because a cutting only
+    /// counts off one somebody has already raised. So the sentence names the act that actually
+    /// opens the page instead of a generic one that would be false for two thirds of the tab.
+    /// </summary>
+    private static string StrangerLine(CropKind k) => k switch
+    {
+        CropKind.FruitTree => "A stranger. Root a cutting of your own and the page begins.",
+        CropKind.BerryBush => "A stranger. Set a cutting of your own and the page begins.",
+        _ => "A stranger. Grow it once and the page begins.",
+    };
+
+    /// <summary>
+    /// The Acquainted voice for a perennial, which cannot use the sown-crop one: a fruit tree
+    /// has no soil nutrient at all, so "It hungers for N" would be inventing a fact.
+    ///
+    /// Words only, no figures. That split is the whole point of the middle tier, and it is why
+    /// the vernalization sentence says "a real winter" here and prints hours at Versed.
+    /// </summary>
+    private static string PerennialShapeLine(ICoreClientAPI capi, CropEntry e)
+    {
+        var parts = new List<string>();
+
+        if (e.Kind == CropKind.FruitTree)
+        {
+            parts.Add(e.Evergreen ? "Evergreen." : "Deciduous.");
+            // The single most opaque fact an orchard has: a deciduous fruit tree banks cold
+            // hours and will not flower until it has them, and vanilla says so nowhere.
+            if (!e.Evergreen && !float.IsNaN(e.VernalizationHours))
+                parts.Add("It will not flower until it has had a real winter.");
+            else if (e.Evergreen)
+                parts.Add("It fruits without waiting on a winter.");
+        }
+        else if (e.Kind == CropKind.BerryBush)
+        {
+            if (!float.IsNaN(e.DormantBelow)) parts.Add("It sleeps through the cold and is late to wake.");
+            if (!float.IsNaN(e.DrawAtBest))
+                parts.Add(e.DrawAtBest <= 5 ? "It is a light feeder." : "It is a heavy feeder.");
+        }
+
+        string? frost = FrostClause(e) ?? PaceClause(capi, e);
+        if (frost != null) parts.Add(frost);
+        return parts.Count == 0 ? "You know its habits." : string.Join(" ", parts);
     }
 
     private static string? FrostClause(CropEntry e)

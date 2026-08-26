@@ -37,6 +37,35 @@ public sealed class CropEntry
     public int GrowthStages;
     public bool MultipleHarvests;
 
+    // ---- Perennials -------------------------------------------------------------
+    // Added for fruit familiarity. A perennial needs an identity a supplier can key on
+    // and something worth handing over at the top of a tier ladder, and neither existed.
+
+    /// <summary>A fruit tree's identity, as "domain:treeType". Null for everything else.
+    /// Fruit trees are built from a branch block's TypeProps rather than from a block of
+    /// their own, so <see cref="PlantBlock"/> is null for them and a familiarity supplier
+    /// has nothing else to address them by. The domain is in the key because more than one
+    /// mod registers its own branch block with its own type table.</summary>
+    public string? TypeKey;
+
+    /// <summary>Cold hours a deciduous fruit tree must bank before it will flower, and the
+    /// temperature that counts as cold. Vanilla surfaces this nowhere at all, which makes
+    /// it the most opaque per-species fact an orchard has.</summary>
+    public float VernalizationHours = float.NaN;
+    public float VernalizationTemp = float.NaN;
+
+    /// <summary>An evergreen fruit tree, which does not vernalize and does not drop leaves.</summary>
+    public bool Evergreen;
+
+    /// <summary>A berry bush's dormancy band. Per species in the asset: currants sleep and
+    /// wake at different temperatures from everything else.</summary>
+    public float DormantBelow = float.NaN;
+    public float WakesAbove = float.NaN;
+
+    /// <summary>A berry bush's nutrient draw per cycle at its best health. Per species:
+    /// cloudberry and strawberry draw half of what the rest do.</summary>
+    public float DrawAtBest = float.NaN;
+
     /// <summary>
     /// True when the produce declares the BASE GAME's domain. That is not the same as being
     /// vanilla content and must never be captioned as such: a mod is free to ship its
@@ -390,6 +419,11 @@ public static class CropCatalog
                 HeatDamageAbove = Temp(growth, "pauseGrowthAboveTemperature")
                     ?? block.Attributes?["stopAboveTemperature"].AsFloat(float.NaN) ?? float.NaN,
                 MultipleHarvests = true,
+                // The ByType variants in the asset are already resolved per block by the time
+                // the registry hands it over, so these read as plain keys here.
+                DormantBelow = Temp(growth, "goDormantBelowTemperature") ?? float.NaN,
+                WakesAbove = Temp(growth, "leaveDormantAboveTemperature") ?? float.NaN,
+                DrawAtBest = BestDraw(growth),
             });
         }
         return entries;
@@ -401,6 +435,28 @@ public static class CropCatalog
     {
         float v = growth?[key].AsFloat(float.NaN) ?? float.NaN;
         return float.IsNaN(v) ? null : v;
+    }
+
+    /// <summary>
+    /// What a bush draws per cycle when it is at its best. The asset holds a draw for each of
+    /// four health states; the best one is the honest single figure, because it is what the
+    /// bed must supply for the bush to stay there. The three lower rows describe a bush that
+    /// is already going short, which is a consequence rather than a property of the species.
+    ///
+    /// N, P and K are equal on every vanilla species, so one number says it. If a mod ever
+    /// splits them this returns the largest, which is still the figure the bed has to meet.
+    /// </summary>
+    private static float BestDraw(Vintagestory.API.Datastructures.JsonObject? growth)
+    {
+        var best = growth?["nutrientUseByHealthState"]?["bountiful"];
+        if (best == null || !best.Exists) return float.NaN;
+        float n = best["n"].AsFloat(float.NaN);
+        float p = best["p"].AsFloat(float.NaN);
+        float k = best["k"].AsFloat(float.NaN);
+        float max = float.NaN;
+        foreach (float v in new[] { n, p, k })
+            if (!float.IsNaN(v) && (float.IsNaN(max) || v > max)) max = v;
+        return max;
     }
 
     /// <summary>One representative block per live species: grown rather than wild, and
@@ -459,29 +515,42 @@ public static class CropCatalog
             $"Fruit tree rosters: {rosters.Count} — {string.Join(", ", rosters.Select(g => $"{g.Key} ({g.First().TypeProps.Count} types)"))}");
 
         foreach (var roster in rosters)
-        foreach (var (_, props) in roster.First().TypeProps)
         {
-            var produce = props.FruitStacks?
-                .Select(d => d?.ResolvedItemstack)
-                .FirstOrDefault(s => s?.Collectible?.Code != null);
-            if (produce?.Collectible?.Code == null) continue;
+            // The branch block's own domain, not the fruit's. bdorchard's fig drops game:fruit-fig,
+            // so keying identity on the produce would file a modded tree under the base game.
+            string treeDomain = roster.First().Code.Domain;
 
-            // One card per produce. Two rosters offering the same fruit would otherwise print
-            // the same tree twice, and the reader has no way to tell which row is which.
-            if (!seen.Add(produce.Collectible.Code.ToString())) continue;
-
-            entries.Add(new CropEntry
+            foreach (var (treeType, props) in roster.First().TypeProps)
             {
-                Kind = CropKind.FruitTree,
-                ProduceCode = produce.Collectible.Code.ToString(),
-                DisplayName = produce.GetName(),
-                SourceDomain = produce.Collectible.Code.Domain,
-                Produce = produce,
-                ColdDamageBelow = props.DieBelowTemp?.avg ?? float.NaN,
-                HeatDamageAbove = float.NaN,   // fruit trees have no modelled heat ceiling
-                TotalGrowthDays = (props.FloweringDays?.avg ?? 0) + (props.FruitingDays?.avg ?? 0) + (props.RipeDays?.avg ?? 0),
-                MultipleHarvests = true,
-            });
+                var produce = props.FruitStacks?
+                    .Select(d => d?.ResolvedItemstack)
+                    .FirstOrDefault(s => s?.Collectible?.Code != null);
+                if (produce?.Collectible?.Code == null) continue;
+
+                // One card per produce. Two rosters offering the same fruit would otherwise print
+                // the same tree twice, and the reader has no way to tell which row is which.
+                if (!seen.Add(produce.Collectible.Code.ToString())) continue;
+
+                bool evergreen = props.CycleType == EnumTreeCycleType.Evergreen;
+                entries.Add(new CropEntry
+                {
+                    Kind = CropKind.FruitTree,
+                    ProduceCode = produce.Collectible.Code.ToString(),
+                    DisplayName = produce.GetName(),
+                    SourceDomain = produce.Collectible.Code.Domain,
+                    Produce = produce,
+                    TypeKey = treeDomain + ":" + treeType,
+                    ColdDamageBelow = props.DieBelowTemp?.avg ?? float.NaN,
+                    HeatDamageAbove = float.NaN,   // fruit trees have no modelled heat ceiling
+                    TotalGrowthDays = (props.FloweringDays?.avg ?? 0) + (props.FruitingDays?.avg ?? 0) + (props.RipeDays?.avg ?? 0),
+                    MultipleHarvests = true,
+                    Evergreen = evergreen,
+                    // An evergreen never vernalizes, so leave the figures absent rather than
+                    // printing a cold requirement it will never wait on.
+                    VernalizationHours = evergreen ? float.NaN : props.VernalizationHours?.avg ?? float.NaN,
+                    VernalizationTemp = evergreen ? float.NaN : props.VernalizationTemp?.avg ?? float.NaN,
+                });
+            }
         }
         return entries;
     }
