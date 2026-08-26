@@ -492,8 +492,18 @@ public static class ChapterRenderer
             }
 
             case "ledger":
+                // Richtextify, not a bare RichTextComponent: the latter takes plain text,
+                // so inline VTML printed literally and readers got "<strong>Stranger.</strong>"
+                // on the page. Every other text block already goes through this path; ledger
+                // was the one that did not, and nothing in the pack used it until now, so the
+                // fault sat unseen since it was written.
+                //
+                // Body font, not italic. Italic is this book's ASIDE voice, carried by every
+                // callout, and a ledger holds core content: the rank ladders a reader is meant
+                // to learn, not commentary on them. Setting them in the aside face told the
+                // eye to skim exactly the lines that matter most.
                 foreach (var it in Arr(block, "entries"))
-                    comps.Add(new RichTextComponent(capi, "  " + it.ToString() + "\n", italic));
+                    comps.AddRange(VtmlUtil.Richtextify(capi, "  " + it.ToString() + "\n", body, onLink));
                 break;
 
             case "divider":
