@@ -27,6 +27,10 @@ public static class CropsRenderer
     private static readonly double[] Muted = { 0.42, 0.36, 0.28, 1 };
     private static readonly double[] Faint = { 0.32, 0.27, 0.21, 0.62 };
 
+    // The sowing accent. #4f6338, the same field green The Turned Earth declares, so the
+    // two surfaces about growing things speak with one colour.
+    private static readonly double[] Sown = { 0.31, 0.39, 0.22, 1.0 };
+
     public static List<RichTextComponentBase[]> RenderPages(ICoreClientAPI capi, List<CropEntry> entries,
         BlockPos? homebase, double pageWidth, double pageHeight,
         ICropFamiliaritySource? familiarity = null, GrowthMarksStyle marks = GrowthMarksStyle.Tally)
@@ -39,6 +43,7 @@ public static class CropsRenderer
             Muted = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithColor(Muted),
             Window = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithSlant(Cairo.FontSlant.Italic).WithColor(Ink),
             Voice = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithSlant(Cairo.FontSlant.Italic).WithColor(Muted),
+            Sow = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithWeight(Cairo.FontWeight.Bold).WithColor(Sown),
             Header = CairoFont.WhiteSmallishText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold).WithFontSize(19f).WithColor(Ink),
             Callout = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifDecorative).WithWeight(Cairo.FontWeight.Bold).WithColor(Ink),
         };
@@ -53,7 +58,7 @@ public static class CropsRenderer
 
     private sealed class Fonts
     {
-        public CairoFont Name = null!, NameFaint = null!, Body = null!, Muted = null!,
+        public CairoFont Name = null!, NameFaint = null!, Body = null!, Muted = null!, Sow = null!,
                          Window = null!, Voice = null!, Header = null!, Callout = null!;
     }
 
@@ -278,13 +283,13 @@ public static class CropsRenderer
         else if (st == null || st.Tier == CropTier.Versed)
         {
             // No familiarity for this entry, or all of it earned: the figures, then the sowing.
-            comps.Add(new RichTextComponent(capi, GrowingLine(e, true) + "\n", f.Body));
-            comps.Add(new RichTextComponent(capi, PlantingLine(capi, e, homebase) + "\n", f.Window));
+            comps.Add(new RichTextComponent(capi, GrowingLine(e, true) + "\n", f.Muted));
+            comps.Add(new RichTextComponent(capi, PlantingLine(capi, e, homebase) + "\n", f.Sow));
         }
         else if (st.Tier == CropTier.Acquainted)
         {
-            comps.Add(new RichTextComponent(capi, ShapeLine(capi, e) + "\n", f.Body));
-            comps.Add(new RichTextComponent(capi, PlantingLine(capi, e, homebase) + "\n", f.Window));
+            comps.Add(new RichTextComponent(capi, ShapeLine(capi, e) + "\n", f.Muted));
+            comps.Add(new RichTextComponent(capi, PlantingLine(capi, e, homebase) + "\n", f.Sow));
         }
         else
         {
