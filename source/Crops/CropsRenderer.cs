@@ -313,8 +313,10 @@ public static class CropsRenderer
         if (e.Kind == CropKind.Mushroom)
         {
             // Nothing, on purpose. The MUSHROOMS heading has already said the one true thing
-            // about the whole group, and repeating it on two dozen cards cost each of them a
-            // full card's footprint to say what the reader had read at the top of the group.
+            // about the whole group, and repeating it on all 81 of them cost each card a full
+            // footprint to say what the reader had read at the top of the group. Eighty-one is
+            // measured, not estimated: 45 vanilla plus 36 from Mycodiversity, which registers
+            // into the game domain and so is easy to miscount as vanilla.
             //
             // There is also nothing else a mushroom could say here. BuildMushrooms leaves both
             // temperature bounds NaN and sets no growth days, so GrowingLine returns an empty
