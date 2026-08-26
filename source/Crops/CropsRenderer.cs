@@ -157,8 +157,16 @@ public static class CropsRenderer
         {
             if (lastKind == null || e.Kind != lastKind)
             {
+                // The same break a family gets, for the same reason. A group heading with no
+                // rule under it read as one more bold line in a column of running text, which
+                // is the exact complaint the rule was added to answer for families. It matters
+                // more here, not less: a family of crops earns a fresh rule every two or three
+                // cards, while MUSHROOMS carries one heading over eighty-one.
                 pending = Heading(capi, GroupTitle(e.Kind), anyBefore, f);
+                pending.Add(new SownRuleComponent(capi, 12));
+                pending.Add(new ClearFloatTextComponent(capi, 3));
                 pending.Add(new RichTextComponent(capi, GroupNote(e.Kind), f.Voice));
+                pending.Add(new ClearFloatTextComponent(capi, 8));
                 lastKind = e.Kind;
                 anyBefore = true;
             }
@@ -406,7 +414,14 @@ public static class CropsRenderer
         if (!identified)
             comps.Add(new RichTextComponent(capi, $"Learning… {(int)(know * 100)}%\n", f.Muted));
 
-        comps.Add(new ClearFloatTextComponent(capi, 15));
+        // A crop sits inside a family whose rule reappears every two or three cards, so 15 was
+        // enough to keep one card off the next. A perennial or a mushroom has no such rule for
+        // pages at a time, and the icon float compounds it: the float is about two lines tall,
+        // so a card whose detail runs to a third line has that line clear the float and return
+        // to the column's LEFT margin, further left than the name it belongs to. At 15 that
+        // orphaned line sat closer to the card below than to its own. The extra air is what
+        // makes it read upward instead of down.
+        comps.Add(new ClearFloatTextComponent(capi, e.Kind == CropKind.SeedCrop ? 15 : 24));
         return comps;
     }
 

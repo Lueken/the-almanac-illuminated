@@ -54,6 +54,22 @@ public class AlmanacIlluminatedModSystem : ModSystem
         return forageAtlas.TryGetValue(ForageAtlas.Key(produceCode), out var row) ? row : null;
     }
 
+    /// <summary>
+    /// Ask the server for the forage atlas, once per session that actually lands.
+    ///
+    /// Called from LevelFinalize, where the world is running and nothing is paused, and again
+    /// on every book open as a retry for the case where the channel was not yet up. The latch
+    /// is set only when the game is running: a paused integrated server may never process the
+    /// packet, and latching on a send it did not answer would strand the atlas for the session.
+    /// </summary>
+    private void RequestForageAtlas()
+    {
+        if (forageAtlas != null || forageAtlasRequested) return;
+        if (clientChannel?.Connected != true) return;
+        clientChannel.SendPacket(new ForageAtlasRequest());
+        forageAtlasRequested = capi?.IsGamePaused != true;
+    }
+
     /// <summary>Dye colour for a species key, or null when no atlas has arrived or the species
     /// yields none. Most yield none, so absence is the ordinary case and never an error.</summary>
     public string? DyeColourFor(string produceCode)
@@ -373,17 +389,19 @@ public class AlmanacIlluminatedModSystem : ModSystem
         // let the real position arrive later if it ever does.
         bool serverCanAnswer = clientChannel?.Connected == true && capi?.IsGamePaused != true;
 
+        // Asked here, and deliberately OUTSIDE the branch below. Sharing serverCanAnswer meant
+        // the atlas was never asked for at all in singleplayer: this book pauses the game while
+        // it is open, so IsGamePaused is true on every path that runs from a book open, and the
+        // one thing that fired the request could never satisfy the condition gating it. Every
+        // mushroom card rendered with no habitat, no ground and no dye, in a world where all of
+        // that data was sitting on the other side of one packet. Nothing waits on this answer,
+        // so it never belonged behind the gate that exists for the ones that do.
+        RequestForageAtlas();
+
         if (serverCanAnswer)
         {
             onHomebaseReceived = onReady;
             clientChannel!.SendPacket(new HomebaseRequest());
-            // Same trip, same conditions: the atlas cannot change without a restart, so one
-            // ask per session is enough and nothing waits on the answer.
-            if (!forageAtlasRequested)
-            {
-                forageAtlasRequested = true;
-                clientChannel!.SendPacket(new ForageAtlasRequest());
-            }
             return;
         }
 
@@ -413,6 +431,12 @@ public class AlmanacIlluminatedModSystem : ModSystem
             .RegisterMessageType<ForageAtlasResponse>()
             .SetMessageHandler<HomebaseResponse>(OnHomebaseResponse)
             .SetMessageHandler<ForageAtlasResponse>(OnForageAtlasResponse);
+
+        // The atlas is asked for from here rather than from the book, because the book pauses
+        // the game while it is open and a paused integrated server does not answer. By level
+        // finalize the world is running and the channel is up, which is the one moment that is
+        // reliably true in both singleplayer and on a server.
+        api.Event.LevelFinalize += RequestForageAtlas;
 
         // The in-hands book (renderer patch). Init only wires the hook; the dummy
         // item resolves lazily on first render, after registries are ready.
