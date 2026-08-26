@@ -148,6 +148,7 @@ public static class CropsRenderer
             if (lastKind == null || e.Kind != lastKind)
             {
                 pending = Heading(capi, GroupTitle(e.Kind), anyBefore, f);
+                pending.Add(new RichTextComponent(capi, GroupNote(e.Kind), f.Voice));
                 lastKind = e.Kind;
                 anyBefore = true;
             }
@@ -191,6 +192,31 @@ public static class CropsRenderer
         CropKind.BerryBush => "BUSHES",
         CropKind.FruitTree => "FRUIT TREES",
         _ => "OTHER",
+    };
+
+    /// <summary>
+    /// Said once under a perennial heading and never on the cards beneath it.
+    ///
+    /// Every one of these groups leaves familiarity at <see cref="BuildByFamily"/>'s first
+    /// line, so their cards arrive with no standing and no family and print whatever they
+    /// have outright. Next to a sown crop the reader has never grown, whose page is held
+    /// mostly shut, that looks like the book keeping secrets at random. It is not: nothing
+    /// in these groups is sown, so there is no growing of them to record and nothing to
+    /// hold back. Saying so once per group is what makes the asymmetry read as a rule.
+    ///
+    /// Not hidden instead of explained, deliberately. Until a fruit tree can earn its page
+    /// there is no way for a reader to win these figures back, and withholding what cannot
+    /// be earned is a loss dressed up as a reward.
+    /// </summary>
+    private static string GroupNote(CropKind k) => k switch
+    {
+        CropKind.Mushroom =>
+            "None of what follows is planted. It is only found, and what is found is never learned by sowing.\n",
+        CropKind.BerryBush =>
+            "Bushes are gathered rather than sown. These pages stand open because there is no growing of them to set down.\n",
+        CropKind.FruitTree =>
+            "An orchard is grown, but not from seed and not in rows. Tending one raises your standing as a grower; it does not fill a page the way a sown crop does, so these stand open.\n",
+        _ => "\n",
     };
 
     // ------------------------------------------------------------ headings
@@ -286,7 +312,14 @@ public static class CropsRenderer
 
         if (e.Kind == CropKind.Mushroom)
         {
-            comps.Add(new RichTextComponent(capi, "Foraged, not sown.\n", f.Window));
+            // Nothing, on purpose. The MUSHROOMS heading has already said the one true thing
+            // about the whole group, and repeating it on two dozen cards cost each of them a
+            // full card's footprint to say what the reader had read at the top of the group.
+            //
+            // There is also nothing else a mushroom could say here. BuildMushrooms leaves both
+            // temperature bounds NaN and sets no growth days, so GrowingLine returns an empty
+            // string, and PlantingWindow would fall back to a bare grow floor with no ceiling
+            // and report a fruiting season derived from nothing about the mushroom at all.
         }
         else if (st == null || st.Tier == CropTier.Versed)
         {
