@@ -49,13 +49,6 @@ public class ForageAtlasResponse
 {
     [ProtoMember(1)] public List<ForageAtlasRow> Rows = new();
 
-    /// <summary>Worldgen rainfall and forest density at the bound spawn. Sent rather than
-    /// sampled client-side: every WorldGenValues call in the survival source sits on a
-    /// server path, and whether ForestDensity resolves on a client was not confirmed. Three
-    /// floats is a cheaper answer than a subtle wrong one.</summary>
-    [ProtoMember(2)] public float HomeRain = -1f;
-    [ProtoMember(3)] public float HomeForest = -1f;
-
     /// <summary>The atlas's own median rainfall floor, computed server-side over the rows it
     /// actually built. The wetness clause is printed relative to this rather than to a
     /// constant, because vanilla's 45 species all sit at exactly 0.4 and a fixed threshold

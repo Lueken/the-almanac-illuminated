@@ -269,21 +269,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
         {
             var rows = ForageAtlas.Build(sapi);
             var reply = new ForageAtlasResponse { Rows = rows, MedianRain = ForageAtlas.MedianRain(rows) };
-
-            // Worldgen rainfall and forest density at the bound spawn, read on the side that
-            // is known to resolve them. WorldGenValues is what populates ForestDensity.
-            var pos = fromPlayer.GetSpawnPosition(false);
-            var climate = sapi.World.BlockAccessor.GetClimateAt(
-                new BlockPos((int)pos.X, (int)pos.Y, (int)pos.Z), EnumGetClimateMode.WorldGenValues);
-            if (climate != null)
-            {
-                reply.HomeRain = climate.Rainfall;
-                reply.HomeForest = climate.ForestDensity;
-            }
-
             serverChannel?.SendPacket(reply, fromPlayer);
             IlluminatedLogger.Info(sapi, "crops",
-                $"forage atlas sent to {fromPlayer.PlayerName}: {rows.Count} mushroom row(s), median minRain {reply.MedianRain:0.##}, home rain {reply.HomeRain:0.##} forest {reply.HomeForest:0.##}");
+                $"forage atlas sent to {fromPlayer.PlayerName}: {rows.Count} mushroom row(s), median minRain {reply.MedianRain:0.##}");
         }
         catch (Exception e)
         {
@@ -297,12 +285,20 @@ public class AlmanacIlluminatedModSystem : ModSystem
         // No public getter for the raw bed spawn; infer it by divergence from world default.
         var def = sapi?.World.DefaultSpawnPosition;
         bool bed = def == null || Math.Abs(pos.X - def.X) > 1 || Math.Abs(pos.Z - def.Z) > 1;
+        // The ground at that spawn, read on the side that is known to resolve it:
+        // WorldGenValues is what populates ForestDensity, and every call to it in the
+        // survival source sits on a server path.
+        var climate = sapi?.World.BlockAccessor.GetClimateAt(
+            new BlockPos((int)pos.X, (int)pos.Y, (int)pos.Z), EnumGetClimateMode.WorldGenValues);
+
         serverChannel?.SendPacket(new HomebaseResponse
         {
             X = (int)pos.X,
             Y = (int)pos.Y,
             Z = (int)pos.Z,
             BedSpawn = bed,
+            Rain = climate?.Rainfall ?? -1f,
+            Forest = climate?.ForestDensity ?? -1f,
         }, fromPlayer);
     }
 
@@ -311,8 +307,6 @@ public class AlmanacIlluminatedModSystem : ModSystem
         var map = new Dictionary<string, ForageAtlasRow>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in msg.Rows) map[row.Key] = row;
         forageAtlas = map;
-        homeRain = msg.HomeRain;
-        homeForest = msg.HomeForest;
         atlasMedianRain = msg.MedianRain;
 
         if (capi != null)
@@ -330,6 +324,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
         homebasePos = new BlockPos(msg.X, msg.Y, msg.Z);
         homebaseLabel = msg.BedSpawn ? "your bed" : "world spawn";
         homebaseProvisional = false;
+        // Refreshed with the position, because they describe the same place and a bed can move.
+        homeRain = msg.Rain;
+        homeForest = msg.Forest;
 
         var cb = onHomebaseReceived;
         onHomebaseReceived = null;
