@@ -330,8 +330,19 @@ public static class CropsRenderer
         //   one line on when to sow it where you live
         // A tier removes lines from the bottom; it never rearranges them. The kind is not
         // labelled, because every card sits under a heading that already names it.
+        // Inline, not a left float, and the difference is the whole legibility of the card.
+        //
+        // A left float reserves a column for its own height and no further. The icon is about
+        // two lines tall, so the name and one line of detail sat indented beside it and every
+        // line after that cleared the float and returned to the column's LEFT margin, further
+        // left than the name it belonged to. On a four-line card that put "wet ground" and
+        // "Sep-Nov" hanging out past the entry above them, and no amount of space between cards
+        // could fix it, because the ragged edge is inside the card.
+        //
+        // Inline puts the icon in the name's own line instead. The line grows to the icon's
+        // height, so nothing is lost vertically, and every line below starts at one left edge.
         if (e.Produce != null)
-            comps.Add(new ItemstackTextComponent(capi, FreshIcon(capi, e.Produce), 40, 6, EnumFloat.Left));
+            comps.Add(new ItemstackTextComponent(capi, FreshIcon(capi, e.Produce), 40, 6, EnumFloat.Inline));
 
         // The source label used to read "vanilla" for anything in the base game's domain, and
         // that was a claim the code could not back. A mod may ship its blocktypes under

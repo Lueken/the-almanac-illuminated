@@ -19,7 +19,10 @@ public class SilhouetteComponent : RichTextComponentBase
     public SilhouetteComponent(ICoreClientAPI api, double size) : base(api)
     {
         this.size = size;
-        Float = EnumFloat.Left;
+        // Inline, matching the produce icon on an identified card. A masked card and a plain
+        // one must sit at the same shape, or the tab reads as two hands. See the note on the
+        // icon in CropsRenderer.BuildCard for why a left float was wrong for both.
+        Float = EnumFloat.Inline;
         VerticalAlign = EnumVerticalAlign.Top;
         BoundsPerLine = new[] { new LineRectangled(0, 0, 0, 0) };
     }
@@ -28,12 +31,16 @@ public class SilhouetteComponent : RichTextComponentBase
     {
         TextFlowPath cur = GetCurrentFlowPathSection(flowPath, lineY) ?? flowPath[0];
         double s = GuiElement.scaled(size);
+        // Inline means advancing the cursor past itself so the name follows on the same line,
+        // where the float form deliberately did not advance so text would wrap beside it.
+        bool linebreak = offsetX + s > cur.X2;
+        double x = linebreak ? cur.X1 : offsetX;
         BoundsPerLine[0].Width = s;
         BoundsPerLine[0].Height = s;
-        BoundsPerLine[0].X = cur.X1;
-        BoundsPerLine[0].Y = lineY;
-        nextOffsetX = offsetX;
-        return EnumCalcBoundsResult.Continue;   // float: following text wraps beside it
+        BoundsPerLine[0].X = x;
+        BoundsPerLine[0].Y = lineY + (linebreak ? currentLineHeight : 0);
+        nextOffsetX = x + s;
+        return linebreak ? EnumCalcBoundsResult.Nextline : EnumCalcBoundsResult.Continue;
     }
 
     public override void ComposeElements(Context ctx, ImageSurface surface)
