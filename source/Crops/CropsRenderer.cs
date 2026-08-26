@@ -334,16 +334,18 @@ public static class CropsRenderer
 
         if (e.Kind == CropKind.Mushroom)
         {
-            // Nothing, on purpose. The MUSHROOMS heading has already said the one true thing
-            // about the whole group, and repeating it on all 81 of them cost each card a full
-            // footprint to say what the reader had read at the top of the group. Eighty-one is
-            // measured, not estimated: 45 vanilla plus 36 from Mycodiversity, which registers
-            // into the game domain and so is easy to miscount as vanilla.
+            // The group note above says the one thing true of all 81 of them. What belongs HERE
+            // is only what differs species to species, and until now nothing did, because
+            // BuildMushrooms read a name and an icon and asked the block for nothing else.
             //
-            // There is also nothing else a mushroom could say here. BuildMushrooms leaves both
-            // temperature bounds NaN and sets no growth days, so GrowingLine returns an empty
-            // string, and PlantingWindow would fall back to a bare grow floor with no ceiling
-            // and report a fruiting season derived from nothing about the mushroom at all.
+            // Still no figures line and still no planting line: both temperature bounds are NaN
+            // by construction, so GrowingLine returns empty and PlantingWindow would fall back
+            // to a bare grow floor with no ceiling and report a season derived from nothing
+            // about the mushroom. The habitat band that would fill them lives in
+            // worldgen/blockpatches, which is a server-only asset category and unreachable from
+            // a client-side renderer without a packet.
+            string warn = WarningLine(e);
+            if (warn.Length > 0) comps.Add(new RichTextComponent(capi, warn + "\n", f.Voice));
         }
         else if (st == null || st.Tier == CropTier.Versed)
         {
@@ -518,6 +520,38 @@ public static class CropsRenderer
         string? second = FrostClause(e) ?? PaceClause(capi, e);
         if (second == null) return hunger;
         return hunger + " " + second;
+    }
+
+    /// <summary>
+    /// What a mushroom is worth knowing before you eat it, and nothing else.
+    ///
+    /// Banded rather than numeric on purpose. A figure invites arithmetic ("I have 14 health,
+    /// a -8 is survivable"), and the point of the line is a decision, not a calculation. The
+    /// bands come from the pack's own distribution rather than from round numbers: four species
+    /// sit at -20 or worse and will kill outright, ten cluster from -6 to -10, fourteen sit
+    /// between -1 and -2.5 where the danger is only quantity, and the remaining fifty-three are
+    /// ordinary food.
+    ///
+    /// Visions are a separate clause because two of the six psychedelic species are poisonous
+    /// as well, and a card that printed only one of those would be the dangerous kind of wrong.
+    ///
+    /// Standing through winter earns its place for a forager rather than an eater: it is the
+    /// difference between a species worth walking out for in the cold and one that is simply
+    /// gone. Both halves of the test are required, so tolerating deep cold alone does not
+    /// claim permanence.
+    /// </summary>
+    private static string WarningLine(CropEntry e)
+    {
+        var parts = new List<string>();
+
+        if (e.Toxicity <= -20) parts.Add("Deadly.");
+        else if (e.Toxicity <= -5) parts.Add("Poisonous.");
+        else if (e.Toxicity < 0) parts.Add("Sickening in quantity.");
+
+        if (e.Psychedelic > 0) parts.Add("Brings visions.");
+        if (e.StandsWinter) parts.Add("It stands the winter.");
+
+        return string.Join(" ", parts);
     }
 
     /// <summary>

@@ -66,6 +66,33 @@ public sealed class CropEntry
     /// cloudberry and strawberry draw half of what the rest do.</summary>
     public float DrawAtBest = float.NaN;
 
+    // ---- Mushrooms --------------------------------------------------------------
+    // Everything here already reaches the client on the block registry. The habitat data a
+    // mushroom card really wants (temperature band, host tree, rainfall) lives in
+    // worldgen/blockpatches, and `worldgen` is a SERVER-ONLY asset category, so none of it is
+    // readable from here at all. That needs a packet and is a separate build.
+
+    /// <summary>What eating one costs in health. Negative is harmful, zero is ordinary food.
+    /// The only nutritional axis a mushroom varies on: every species in the pack is satiety 80,
+    /// category Vegetable, so an edibility line would print one number eighty-one times.</summary>
+    public float Toxicity;
+
+    /// <summary>Above zero, it brings visions. Kept apart from toxicity because two of the six
+    /// psychedelic species are also poisonous and the card must say both.</summary>
+    public float Psychedelic;
+
+    /// <summary>The temperature at which a standing flush is destroyed, and whether it dies
+    /// back after fruiting. Both are read every server tick by BlockEntityMycelium, so they
+    /// are live behaviour rather than decoration. Five species set -99 and false together and
+    /// stand through winter forever, which is the one genuinely useful client-only fact.</summary>
+    public float DieWhenTempBelow = float.NaN;
+    public bool DiesAfterFruiting = true;
+
+    /// <summary>Never dies back at all: it neither freezes off nor ends with its own fruiting.
+    /// Both halves are required, so a species that merely tolerates deep cold is not claimed
+    /// to be permanent.</summary>
+    public bool StandsWinter => !DiesAfterFruiting && !float.IsNaN(DieWhenTempBelow) && DieWhenTempBelow <= -90;
+
     /// <summary>
     /// True when the produce declares the BASE GAME's domain. That is not the same as being
     /// vanilla content and must never be captioned as such: a mod is free to ship its
@@ -572,6 +599,11 @@ public static class CropCatalog
             var produce = ResolveProduce(capi, block);
             if (produce?.Collectible?.Code == null) continue;
 
+            // nutritionPropsByType and mushroomProps both resolve per variant on the block, so
+            // the block is the right source here rather than the dropped stack.
+            var food = block.NutritionProps ?? produce.Collectible.NutritionProps;
+            var shroom = block.Attributes?["mushroomProps"];
+
             entries.Add(new CropEntry
             {
                 Kind = CropKind.Mushroom,
@@ -582,6 +614,10 @@ public static class CropCatalog
                 PlantBlock = block,
                 ColdDamageBelow = float.NaN,
                 HeatDamageAbove = float.NaN,
+                Toxicity = food?.Health ?? 0f,
+                Psychedelic = food?.Psychedelic ?? 0f,
+                DieWhenTempBelow = shroom?["dieWhenTempBelow"].AsFloat(float.NaN) ?? float.NaN,
+                DiesAfterFruiting = shroom?["dieAfterFruiting"].AsBool(true) ?? true,
             });
         }
         return entries;
