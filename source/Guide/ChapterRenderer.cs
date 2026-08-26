@@ -232,7 +232,26 @@ public static class ChapterRenderer
                 if (current.Count > 1 && !Fits(current))
                 {
                     current.RemoveAt(current.Count - 1);
+
+                    // A page break must never fall between a component and the one it
+                    // introduces. A step number is drawn as its own component ahead of
+                    // the item's prose, so without this the paginator would happily end
+                    // a page on a bare numeral and open the next one with the sentence
+                    // it belongs to. Seen in play: a lone circled 3 at the foot of a
+                    // page, and a numbered item whose text began on the far leaf.
+                    //
+                    // Carry any trailing binders over to the next page with the
+                    // component they bind to. If that empties the page, Flush is a no-op
+                    // and the pair simply starts where it already was, which is correct.
+                    var carry = new List<RichTextComponentBase>();
+                    while (current.Count > 0 && BindsToNext(current[current.Count - 1]))
+                    {
+                        carry.Insert(0, current[current.Count - 1]);
+                        current.RemoveAt(current.Count - 1);
+                    }
+
                     Flush();
+                    current.AddRange(carry);
                     current.Add(c);
                 }
             }
@@ -264,6 +283,13 @@ public static class ChapterRenderer
         if (pages.Count == 0) pages.Add(System.Array.Empty<RichTextComponentBase>());
         return pages;
     }
+
+    /// <summary>
+    /// True for a component that introduces the one after it and must never be left
+    /// stranded at the foot of a page without it. Step numbers are the only case
+    /// today; anything drawn as a separate leading glyph belongs here too.
+    /// </summary>
+    private static bool BindsToNext(RichTextComponentBase c) => c is StepNumberComponent;
 
     /// <summary>
     /// Lays a component run out at the page width and returns its height in scaled
