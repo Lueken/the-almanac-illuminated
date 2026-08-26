@@ -54,4 +54,4 @@ The book reads in Lora and Almendra, the serifs the game already ships. Josefin 
 
 ## Credits
 
-The open-book frame art used by the flat page, the page-flip frames, and the page-turn sounds (`textures/gui/bookframe.png`, `textures/gui/flip/`, `sounds/pageturn*.ogg`) are from **Wanderer's Sketchbook** by **JeanPierre**, used with the author's blanket permission for modders ("Feel free and most welcome to modify or to use any of the assets from the mod!", stated on the mod's page).
+The page-turn sounds (`sounds/pageturn*.ogg`) are from **Wanderer's Sketchbook** by **JeanPierre**, used with the author's blanket permission for modders ("Feel free and most welcome to modify or to use any of the assets from the mod!", stated on the mod's page). The same mod's open-book frame art and page-flip frames dressed the flat page until 0.2.0 retired it; the modeled book that replaced it draws its own boards and turns its own sheets, so neither ships any more.

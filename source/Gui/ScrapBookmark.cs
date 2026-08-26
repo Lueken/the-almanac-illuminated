@@ -44,8 +44,9 @@ public sealed class ScrapSkin
 /// </summary>
 public static class ScrapBookmark
 {
-    // Parchment. Sampled from resources/assets/almanacilluminated/textures/gui/bookframe.png
-    // (page interior and the aged rim just inside the frame), plus the dominant tone of
+    // Parchment. Sampled from the flat book's frame art (page interior and the aged
+    // rim just inside the frame) — that art was retired with the flat page in 0.2.0,
+    // so these values are now the record of it — plus the dominant tone of
     // textures/shape/book/paper.png and the shadow tone of textures/shape/book/scrap-cream.png.
     private static readonly int[] Parchment =
     {
@@ -71,7 +72,7 @@ public static class ScrapBookmark
 
     // Leather. Sampled from resources/assets/almanacilluminated/textures/shape/book/cover.png
     // (the book's own cover, mottled dark leather), with the highlight taken from the
-    // bookframe.png outer frame band so a leather scrap belongs to the same board.
+    // retired frame art's outer band so a leather scrap belongs to the same board.
     private static readonly int[] Leather =
     {
         unchecked((int)0xFF755245),   // bookframe outer frame band, highlight

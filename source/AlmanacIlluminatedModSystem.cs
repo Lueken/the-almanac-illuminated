@@ -7,7 +7,7 @@ namespace AlmanacIlluminated;
 
 /// <summary>
 /// The Almanac: Illuminated — a living questbook for the modded world.
-/// Native GUI book dialog, presented as a book held in the hands or as a flat page.
+/// Native GUI book dialog, presented as a book held in the reader's hands.
 /// Design of record: agentic-os projects/briefs/the-almanac-illuminated/.
 /// </summary>
 public class AlmanacIlluminatedModSystem : ModSystem
@@ -36,13 +36,12 @@ public class AlmanacIlluminatedModSystem : ModSystem
     // inline so registration is safe regardless of ModSystem start order.
     private readonly List<IAlmanacBookTab> bookTabs = new();
 
-    // The physical book: the default presentation. The flat dialog still composes
-    // every page (it is the layout engine); the view captures it to a framebuffer
-    // and draws it on a modeled, tilted book. Flat rendering stays reachable as a
-    // preference and as the automatic fallback when the capture cannot run.
-    private const string PresentationHotkeyCode = "almanacilluminatedpresentation";
+    // The book's presentation. The dialog still composes every page — it is the
+    // layout engine — and the view captures it to a framebuffer and draws it on a
+    // modeled, tilted book. There is no second presentation: the flat page was
+    // retired in 0.2.0, so a machine that cannot run the capture cannot open the
+    // book, and says so plainly rather than failing quietly.
     private PhysicalBookView? physicalView;
-    private bool physicalPreferred = true;
     /// <summary>Pause the singleplayer world while the book is open. Default on; the book
     /// exists to be read, and reading should not cost daylight.</summary>
     private bool pauseOnOpen = true;
@@ -57,9 +56,6 @@ public class AlmanacIlluminatedModSystem : ModSystem
     private static string SettingsPath => System.IO.Path.Combine(
         Vintagestory.API.Config.GamePaths.DataPath, "ModData", "almanacilluminated", "settings.json");
 
-    /// <summary>The presentation the next open will use: physical unless the player turned it
-    /// off, or the capture proved unavailable on this machine.</summary>
-    private bool UsePhysical => physicalPreferred && physicalView != null && !physicalView.CaptureUnavailable;
 
     // Author preview (dev-only): read guides live from a folder or packed zip, hot-reload on edit.
     private PreviewSource.Location? previewLoc;
@@ -353,12 +349,8 @@ public class AlmanacIlluminatedModSystem : ModSystem
         physicalView.OnCaptureUnavailable = OnCaptureUnavailable;
         api.Event.RegisterRenderer(physicalView, EnumRenderStage.Ortho, "almanacilluminated-bookview");
 
-        api.Input.RegisterHotKey(PresentationHotkeyCode, "Switch the Almanac between the physical book and the flat page",
-            GlKeys.P, HotkeyType.GUIOrOtherControls, altPressed: true);
-        api.Input.SetHotKeyHandler(PresentationHotkeyCode, _ => { TogglePresentation(); return true; });
-
         api.ChatCommands.Create("almbook")
-            .WithDescription("Almanac presentation. No args: report. Args: physical | flat, pause [on|off] (singleplayer reading pause), light [on|off|floor <n>] (read by the world's light), or a physical-book knob: framing (tilt|yaw|dist|scale|fov|height <n>), page bend (bend|stiff|lead|corner <n>), leafing-through (flipslow|flipfast|flipcurl|flipscale|flipmax <n>, flippaper <0|1>), model <0|1>, reset. Knobs save as you set them.")
+            .WithDescription("Almanac presentation. No args: report. Args: pause [on|off] (singleplayer reading pause), light [on|off|floor <n>] (read by the world's light), or a physical-book knob: framing (tilt|yaw|dist|scale|fov|height <n>), page bend (bend|stiff|lead|corner <n>), leafing-through (flipslow|flipfast|flipcurl|flipscale|flipmax <n>, flippaper <0|1>), model <0|1>, reset. Knobs save as you set them.")
             .WithArgs(api.ChatCommands.Parsers.OptionalAll("arg"))
             .HandleWith(OnBookCommand);
 
@@ -388,7 +380,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
             .HandleWith(OnPreviewCommand);
 
         IlluminatedLogger.Info(api, "startup",
-            $"Illuminated loaded. Alt+J opens the book ({(physicalPreferred ? "physical" : "flat")}), Alt+P switches presentation");
+            "Illuminated loaded. Alt+J opens the book");
     }
 
     private TextCommandResult OnWeatherCommand(TextCommandCallingArgs args)
@@ -484,8 +476,8 @@ public class AlmanacIlluminatedModSystem : ModSystem
 
     /// <summary>
     /// Creates the book dialog if needed. Every construction site comes through
-    /// here — a dialog built anywhere else would miss the physical mirror and
-    /// silently open flat.
+    /// here — a dialog built anywhere else would miss the physical mirror and have
+    /// nothing to draw itself with.
     /// </summary>
     /// <summary>One step of the post-LevelFinalize warm pagination: build the dialog if
     /// it does not exist yet, paginate one chapter, and reschedule while work remains.
@@ -497,7 +489,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         {
             EnsureDialog();
             if (bookDialog == null || bookDialog.IsOpened()) return;
-            int left = bookDialog.WarmPaginate(UsePhysical);
+            int left = bookDialog.WarmPaginate();
             if (left > 0) api.Event.RegisterCallback(_ => WarmPaginateStep(api), 40);
             else IlluminatedLogger.Info(api, "book", "Warm pagination complete; first open is prepaid");
         }
@@ -542,88 +534,59 @@ public class AlmanacIlluminatedModSystem : ModSystem
     }
 
     /// <summary>
-    /// Opens the book in the current presentation. Physical mode arms the view
-    /// before TryOpen so not even the first frame draws flat; flat mode just
-    /// opens the dialog, which is the same dialog either way.
+    /// Opens the book. The view is armed before TryOpen so not even the first
+    /// frame draws uncaptured; a machine whose capture has already failed is
+    /// told so instead, because there is nothing else to show.
     /// </summary>
     private void OpenBook()
     {
+        if (physicalView == null || physicalView.CaptureUnavailable)
+        {
+            capi?.ShowChatMessage(CaptureLostLine);
+            return;
+        }
         EnsureDialog();
         if (bookDialog == null) return;
-        if (UsePhysical) physicalView!.ShowLive(bookDialog);
+        physicalView.ShowLive(bookDialog);
         bookDialog.TryOpen();
     }
 
+    /// <summary>What the player is told when the book cannot be drawn at all.</summary>
+    private const string CaptureLostLine =
+        "The Almanac cannot be drawn on this machine — its page needs an offscreen "
+        + "render pass this graphics driver refused. See the client log for the reason.";
+
     /// <summary>
-    /// Closes the book. Physical mode stows it with the reverse draw-out and the
-    /// view closes the dialog when the animation lands; flat mode shuts at once.
-    /// Both go through the dialog's TryClose guard, which makes this idempotent:
-    /// one Alt+J can reach both the game's own close and this handler, and asking
-    /// twice must not read as "cancel the stow".
+    /// Closes the book: the view stows it with the reverse draw-out and closes the
+    /// dialog when the animation lands. It goes through the dialog's TryClose
+    /// guard, which makes this idempotent: one Alt+J can reach both the game's own
+    /// close and this handler, and asking twice must not read as "cancel the stow".
     /// </summary>
     private void CloseBook() => bookDialog?.TryClose();
 
     /// <summary>
-    /// Choose the presentation and remember it. An open book is reopened in the
-    /// new one, since the page layout differs. Returns the line to report, or
-    /// null when the machine cannot draw the physical book at all.
-    /// </summary>
-    private string? SetPresentation(bool physical)
-    {
-        if (capi == null) return null;
-        if (physical && physicalView?.CaptureUnavailable == true)
-            return "The physical Almanac is not available on this machine (see the client log). Reading flat.";
-
-        if (physical == physicalPreferred)
-            return physical ? "Already reading as a book." : "Already reading flat.";
-
-        physicalPreferred = physical;
-        SaveSettings();
-
-        if (bookDialog?.IsOpened() == true)
-        {
-            physicalView?.HideLive();
-            bookDialog.TryClose();
-            OpenBook();
-        }
-        return physicalPreferred
-            ? "The Almanac opens as a book in your hands."
-            : "The Almanac opens as a flat page.";
-    }
-
-    /// <summary>Alt+P: flip between the physical book and the flat page.</summary>
-    private void TogglePresentation()
-    {
-        string? line = SetPresentation(!physicalPreferred);
-        if (line != null) capi?.ShowChatMessage(line);
-    }
-
-    /// <summary>
     /// The capture pipeline failed (no framebuffer, no shader, a driver that
-    /// refuses the offscreen pass). The flat dialog is the whole book minus its
-    /// presentation, so fall back to it rather than showing nothing: stow the
-    /// view, remember the failure for the session, and reopen flat.
+    /// refuses the offscreen pass). Since 0.2.0 there is no second presentation to
+    /// fall back to, so this closes the book and says why, plainly, once: a book
+    /// that silently refused to open would read as a broken mod, and the reason
+    /// lives in a log the player has no cause to look at.
     /// </summary>
     private void OnCaptureUnavailable(string reason)
     {
         if (capi == null) return;
         IlluminatedLogger.Warn(capi, "physical",
-            $"Physical book unavailable ({reason}); falling back to the flat page for this session.");
+            $"The Almanac's page could not be drawn ({reason}); the book is unavailable for this session.");
 
         bool wasOpen = bookDialog?.IsOpened() == true;
         physicalView?.HideLive();
 
         // This arrives mid-render, with the gui loop iterating the dialog list.
-        // Closing and reopening the book from inside that loop is exactly what
-        // the stow path avoids, so hand the swap to the next tick.
+        // Closing the book from inside that loop is exactly what the stow path
+        // avoids, so hand it to the next tick.
         capi.Event.RegisterCallback(_ =>
         {
-            if (wasOpen && bookDialog != null)
-            {
-                bookDialog.TryClose();
-                OpenBook();   // UsePhysical is false now, so this opens flat
-            }
-            capi.ShowChatMessage("The physical Almanac could not be drawn on this machine. Reading flat instead.");
+            if (wasOpen) bookDialog?.TryClose();
+            capi.ShowChatMessage(CaptureLostLine);
         }, 0);
     }
 
@@ -635,7 +598,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
             var cfg = Newtonsoft.Json.JsonConvert.DeserializeObject<BookSettings>(System.IO.File.ReadAllText(SettingsPath));
             if (cfg != null)
             {
-                physicalPreferred = cfg.Physical; pauseOnOpen = cfg.PauseOnOpen; loadedKnobs = cfg;
+                pauseOnOpen = cfg.PauseOnOpen; loadedKnobs = cfg;
                 respectWorldLight = cfg.RespectLight ?? true;
                 illuminationFloor = IlluminationCurve.ClampFloor(cfg.LightFloor ?? IlluminationCurve.DefaultFloor);
                 if (System.Enum.TryParse<GrowthMarksStyle>(cfg.CropMarks, true, out var st)) CropMarks = st;
@@ -654,7 +617,6 @@ public class AlmanacIlluminatedModSystem : ModSystem
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SettingsPath)!);
             var cfg = new BookSettings
             {
-                Physical = physicalPreferred,
                 PauseOnOpen = pauseOnOpen,
                 RespectLight = respectWorldLight,
                 LightFloor = illuminationFloor,
@@ -715,7 +677,8 @@ public class AlmanacIlluminatedModSystem : ModSystem
 
     private class BookSettings
     {
-        public bool Physical = true;
+        // Physical/flat was retired in 0.2.0. A settings file written by an older
+        // version still carries it; Json.NET simply ignores the unknown member.
         /// <summary>Singleplayer reading pause (on by default; `.almbook pause off` to
         /// keep the days moving). Saved but inert in multiplayer.</summary>
         public bool PauseOnOpen = true;
@@ -845,18 +808,14 @@ public class AlmanacIlluminatedModSystem : ModSystem
 
         if (parts.Length == 0)
         {
-            string state = physicalView.CaptureUnavailable
-                ? "flat (the physical book is unavailable on this machine)"
-                : physicalPreferred ? "physical" : "flat";
-            return TextCommandResult.Success($"The Almanac reads {state}. {physicalView.Describe()}");
+            if (physicalView.CaptureUnavailable)
+                return TextCommandResult.Success(CaptureLostLine);
+            return TextCommandResult.Success($"The Almanac reads as a book in your hands. {physicalView.Describe()}");
         }
 
         string verb = parts[0].ToLowerInvariant();
         switch (verb)
         {
-            case "physical":
-            case "flat":
-                return TextCommandResult.Success(SetPresentation(verb == "physical") ?? "Client API unavailable");
             case "status":
                 return TextCommandResult.Success(physicalView.Describe());
             case "reset":
@@ -894,7 +853,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
                 System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v))
         {
             return TextCommandResult.Error(
-                "Usage: .almbook | .almbook physical|flat | .almbook pause [on|off] | .almbook light [on|off|floor <n>] | .almbook tilt|yaw|dist|scale|fov|height <n> | .almbook bend|stiff|lead|corner <n> | .almbook flipslow|flipfast|flipcurl|flipscale|flipmax <n> | .almbook flippaper <0|1> | .almbook model <0|1> | .almbook reset");
+                "Usage: .almbook | .almbook pause [on|off] | .almbook light [on|off|floor <n>] | .almbook tilt|yaw|dist|scale|fov|height <n> | .almbook bend|stiff|lead|corner <n> | .almbook flipslow|flipfast|flipcurl|flipscale|flipmax <n> | .almbook flippaper <0|1> | .almbook model <0|1> | .almbook reset");
         }
 
         switch (verb)
@@ -921,7 +880,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
             case "flippaper": physicalView.FlipPaper = v != 0; break;
             default:
                 return TextCommandResult.Error(
-                    $"Unknown knob '{verb}'. physical, flat, pause, tilt, yaw, dist, scale, fov, height, "
+                    $"Unknown knob '{verb}'. pause, tilt, yaw, dist, scale, fov, height, "
                     + "bend, stiff, lead, corner, flipslow, flipfast, flipcurl, flipscale, flipmax, "
                     + "flippaper, model, quad, reset, status.");
         }

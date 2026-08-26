@@ -51,70 +51,34 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     }
 
     /// <summary>
-    /// Physical-mode bridge. When set and Active, the flat screen
-    /// draw is suppressed — PhysicalBookView captures this dialog into an
-    /// offscreen framebuffer instead — and real mouse events are remapped
-    /// through the tilted page back into the flat space the composers were
-    /// laid out in. Keyboard input needs no remap and flows through untouched.
+    /// The bridge to the modeled book. This dialog never draws itself to the
+    /// screen — PhysicalBookView captures it into an offscreen framebuffer and
+    /// draws it on the tilted page — and real mouse events are remapped back into
+    /// the upright space the composers were laid out in. Keyboard input needs no
+    /// remap and flows through untouched.
     /// </summary>
     public IPhysicalMirror? PhysicalMirror;
 
-    private bool InPhysicalMode => PhysicalMirror?.Active == true;
-
     /// <summary>Local-illumination shading: the book renders by the light actually reaching
     /// the reader. Both set by the mod system; null sampler or a false gate = neutral. The
-    /// capture pass is never shaded — physical mode applies the shade at draw time instead,
-    /// so the two presentations cannot double-tint.</summary>
+    /// capture pass is never shaded — the shade is applied to the modeled book at draw
+    /// time instead, so the page cannot be tinted twice.</summary>
     public AmbientLightSampler? LightSampler;
     public Func<bool>? LightEnabled;
     private bool LightActive => LightSampler != null && LightEnabled?.Invoke() != false;
 
-    /// <summary>2×2 white texture the flat-mode multiply quad renders with (lazily built,
-    /// lives across opens, freed in <see cref="Dispose"/>).</summary>
-    private LoadedTexture? shadeWhiteTex;
-
-    /// <summary>Physical mode layers the book with the dialog stack, above chat and other huds.</summary>
-    public override double DrawOrder => InPhysicalMode ? 0.89 : base.DrawOrder;
+    /// <summary>The book layers with the dialog stack, above chat and other huds.</summary>
+    public override double DrawOrder => 0.89;
 
     public override void OnRenderGUI(float deltaTime)
     {
-        if (InPhysicalMode)
-        {
-            // The flat draw is replaced by the captured tilted page, drawn here
-            // so it inherits this dialog's position in the render order. The ambient
-            // shade rides along so the modeled book is lit by the reader's light.
-            var shade = LightActive ? LightSampler!.Sample(deltaTime) : AmbientLightSampler.Shade.Neutral;
-            PhysicalMirror!.SetAmbientShade(shade.R, shade.G, shade.B);
-            PhysicalMirror!.DrawLive(deltaTime);
-            return;
-        }
-        base.OnRenderGUI(deltaTime);
-        if (LightActive) DrawAmbientShade(LightSampler!.Sample(deltaTime));
-    }
-
-    /// <summary>Flat-mode shade: one multiply-blended quad over the composed dialog, so
-    /// everything beneath it — page, frame, text, hover — darkens and warms together
-    /// without recomposing any of it (dst × shade per channel).</summary>
-    private void DrawAmbientShade(AmbientLightSampler.Shade shade)
-    {
-        if (shade.R >= 0.995f && shade.G >= 0.995f && shade.B >= 0.995f) return;
-        var bounds = SingleComposer?.Bounds;
-        if (bounds == null) return;
-
-        if (shadeWhiteTex == null)
-        {
-            var tex = new LoadedTexture(capi, 0, 2, 2);
-            int w = unchecked((int)0xFFFFFFFF);
-            capi.Render.LoadOrUpdateTextureFromBgra(new[] { w, w, w, w }, false, 0, ref tex);
-            shadeWhiteTex = tex;
-        }
-
-        capi.Render.GlToggleBlend(true, EnumBlendMode.Multiply);
-        capi.Render.Render2DTexture(shadeWhiteTex.TextureId,
-            (float)bounds.renderX, (float)bounds.renderY,
-            (float)bounds.OuterWidth, (float)bounds.OuterHeight, 60f,
-            new Vec4f(shade.R, shade.G, shade.B, 1f));
-        capi.Render.GlToggleBlend(true);
+        // The composers never draw themselves: they are captured and mapped onto
+        // the modeled book, drawn here so it inherits this dialog's position in
+        // the render order. The ambient shade rides along so the book is lit by
+        // the reader's own light.
+        var shade = LightActive ? LightSampler!.Sample(deltaTime) : AmbientLightSampler.Shade.Neutral;
+        PhysicalMirror!.SetAmbientShade(shade.R, shade.G, shade.B);
+        PhysicalMirror!.DrawLive(deltaTime);
     }
 
     /// <summary>Renders the composers for the physical view's capture pass, bypassing the suppression above.</summary>
@@ -122,49 +86,34 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
 
     public override void OnMouseDown(MouseEvent args)
     {
-        if (InPhysicalMode)
+        if (PhysicalMirror!.TryRemap(args.X, args.Y, out int rx, out int ry))
         {
-            if (PhysicalMirror!.TryRemap(args.X, args.Y, out int rx, out int ry))
-            {
-                base.OnMouseDown(new MouseEvent(rx, ry, args.Button, args.Modifiers));
-            }
-            else if (!TryScrapClick(args.X, args.Y))   // pinned scraps hang above the page rect
-            {
-                TrySideTabClick(args.X, args.Y);       // modeled tabs protrude past the side edges
-            }
-            args.Handled = true;   // the book owns the mouse while open, on or off the page
-            return;
+            base.OnMouseDown(new MouseEvent(rx, ry, args.Button, args.Modifiers));
         }
-        base.OnMouseDown(args);
+        else if (!TryScrapClick(args.X, args.Y))   // pinned scraps hang above the page rect
+        {
+            TrySideTabClick(args.X, args.Y);       // modeled tabs protrude past the side edges
+        }
+        args.Handled = true;   // the book owns the mouse while open, on or off the page
     }
 
     public override void OnMouseUp(MouseEvent args)
     {
-        if (InPhysicalMode)
-        {
-            // Clamped remap regardless of on-page: a drag released off the
-            // page must still end at the nearest page point, or the pressed
-            // element stays stuck.
-            PhysicalMirror!.TryRemap(args.X, args.Y, out int rx, out int ry);
-            base.OnMouseUp(new MouseEvent(rx, ry, args.Button, args.Modifiers));
-            args.Handled = true;
-            return;
-        }
-        base.OnMouseUp(args);
+        // Clamped remap regardless of on-page: a drag released off the
+        // page must still end at the nearest page point, or the pressed
+        // element stays stuck.
+        PhysicalMirror!.TryRemap(args.X, args.Y, out int rx, out int ry);
+        base.OnMouseUp(new MouseEvent(rx, ry, args.Button, args.Modifiers));
+        args.Handled = true;
     }
 
     public override void OnMouseMove(MouseEvent args)
     {
-        if (InPhysicalMode)
+        if (PhysicalMirror!.TryRemap(args.X, args.Y, out int rx, out int ry))
         {
-            if (PhysicalMirror!.TryRemap(args.X, args.Y, out int rx, out int ry))
-            {
-                base.OnMouseMove(new MouseEvent(rx, ry, args.DeltaX, args.DeltaY));
-            }
-            args.Handled = true;
-            return;
+            base.OnMouseMove(new MouseEvent(rx, ry, args.DeltaX, args.DeltaY));
         }
-        base.OnMouseMove(args);
+        args.Handled = true;
     }
 
     // Fraction of the screen the open book fills.
@@ -181,6 +130,11 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     // Letter slips keep the old 150 and stay short (GuiElementChapterTabs.UnLetterW),
     // which is what makes the bookmarks read as the longer thing.
     private const double TabMarginMax = 200, TabMarginMin = 90;
+
+    /// <summary>The dialog margin held back for the ribbons. They are modeled geometry
+    /// standing outside the page, not drawn furniture, so they need almost nothing:
+    /// the book region takes the rest of the dialog.</summary>
+    private const double TabMarginPhysical = 12;
 
     // Not readonly: author preview swaps the library live via ReloadLibrary.
     private GuideLibrary library;
@@ -240,9 +194,8 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     private List<RichTextComponentBase[]>? externalColumns;
     private float lastFrameW, lastFrameH;
     private float lastGuiScale;
-    private double boardLeftPx, boardWpx, bookHpx;   // book-region paint extent, for DrawFrame
-    private string physChapterTitle = "The Almanac";  // for the physical header band
-    private ImageSurface? frameSurface;              // the book art, loaded once per open
+    private double boardLeftPx, boardWpx, bookHpx;   // book-region paint extent, for the page faces
+    private string physChapterTitle = "The Almanac";  // for the running head band
     private int soundCounter;                        // rotates the three page-turn sounds
     private int leftPageNum = -1, rightPageNum = -1;  // codex footer numbers, -1 hides one
 
@@ -257,14 +210,16 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     private int footerPageTotal = -1;
     private GuiElementPageCorners? corners;          // the page-turn animation overlay
 
-    // The book art is a fixed-aspect plate; pages and margins are mapped onto it as
-    // fractions of the frame (tuned to bookframe.png, from Wanderer's Sketchbook).
+    // The open book is a fixed-aspect plate; pages and margins map onto it as
+    // fractions. The aspect outlived the painted frame art it was measured from
+    // (Wanderer's Sketchbook) — the modeled book keeps the same proportions, so
+    // every layout fraction tuned against it still holds.
     private const double FrameAspect = 876.0 / 590.0;
-    private const double FxTitleY = 0.05;
-    private const double FxContentTop = 0.12, FxContentBottom = 0.87;
-    private const double FxLeftL = 0.075, FxLeftR = 0.478;
-    private const double FxRightL = 0.522, FxRightR = 0.925;
-    private static readonly AssetLocation FrameAsset = new("almanacilluminated:textures/gui/bookframe.png");
+    // Page columns as fractions of the plate: room for the running-head band up
+    // top, the folio below, and a modest gutter and edge inset.
+    private const double FxContentTop = 0.06, FxContentBottom = 0.95;
+    private const double FxLeftL = 0.045, FxLeftR = 0.472;
+    private const double FxRightL = 0.528;
 
     // The journal: one writable text block per spread, saved to a single file.
     private List<string> journalSpreads = new();
@@ -871,11 +826,10 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     /// chains this across frames after LevelFinalize instead of paying the full
     /// pagination as one first-open freeze. Returns how many chapters still need work.
     ///
-    /// The dims replicate ComposeSpread's math for the EXPECTED presentation
-    /// (<paramref name="physical"/> = the mod system's UsePhysical); if the guess is
-    /// wrong or the source math drifts, the dim guard in ComposeSpread drops the warm
-    /// cache and the first open simply pays the old cost — never wrong pages.</summary>
-    public int WarmPaginate(bool physical)
+    /// The dims replicate ComposeSpread's math; if that math ever drifts from this
+    /// copy, the dim guard in ComposeSpread drops the warm cache and the first open
+    /// simply pays the old cost — never wrong pages.</summary>
+    public int WarmPaginate()
     {
         if (library.Ordered.Count == 0) return 0;
 
@@ -888,19 +842,14 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         if (availW / availH > FrameAspect) { bookH = availH; bookW = bookH * FrameAspect; }
         else { bookW = availW; bookH = bookW / FrameAspect; }
         const double screenPad = 8;
-        bool hasTabs = library.Ordered.Count > 0 || externalTabs.Count > 0 || library.RibbonChapters.Count > 0;
-        double tabMargin = physical ? 12 : hasTabs
-            ? System.Math.Min(TabMarginMax, System.Math.Max(TabMarginMin, (screenW - screenPad - bookW) / 2))
-            : 0;
+        const double tabMargin = TabMarginPhysical;
         if (bookW + 2 * tabMargin > screenW - screenPad)
         {
             bookW = screenW - screenPad - 2 * tabMargin;
             bookH = bookW / FrameAspect;
         }
-        double fxTop = physical ? 0.06 : FxContentTop;
-        double fxBottom = physical ? 0.95 : FxContentBottom;
-        double contentW = ((physical ? 0.472 : FxLeftR) - (physical ? 0.045 : FxLeftL)) * bookW;
-        double contentH = (fxBottom - fxTop) * bookH;
+        double contentW = (FxLeftR - FxLeftL) * bookW;
+        double contentH = (FxContentBottom - FxContentTop) * bookH;
 
         if (cache != null && (System.Math.Abs(cacheContentW - contentW) > 0.5
             || System.Math.Abs(cacheContentH - contentH) > 0.5))
@@ -947,16 +896,11 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
 
         const double btnRow = 38, btnW = 104, btnGap = 6;
         bool hasTabs = library.Ordered.Count > 0 || externalTabs.Count > 0 || library.RibbonChapters.Count > 0;
-        // The whole dialog — ribbons included — must stay inside the window. On a
-        // roomy screen the ribbons get their full margin; on a tight one they give
-        // way first, down to their floor, and then the book itself shrinks.
+        // The whole dialog must stay inside the window. The ribbons are modeled
+        // geometry outside the page, so the book region takes nearly the whole
+        // dialog and only a hair of margin is held back for them.
         const double screenPad = 8;
-        // Physical mode: the ribbons are modeled geometry outside the page, so
-        // the drawn margins they used to occupy would just be blank paper —
-        // the book region takes nearly the whole dialog instead.
-        double tabMargin = InPhysicalMode ? 12 : hasTabs
-            ? Math.Min(TabMarginMax, Math.Max(TabMarginMin, (screenW - screenPad - bookW) / 2))
-            : 0;
+        const double tabMargin = TabMarginPhysical;
         if (bookW + 2 * tabMargin > screenW - screenPad)
         {
             bookW = screenW - screenPad - 2 * tabMargin;
@@ -966,20 +910,11 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         double dialogW = tabMargin + bookW + tabMargin;
         double dialogH = bookH + btnRow;
 
-        // Page text columns. The Fx fractions were tuned to the painted frame
-        // art; physical mode has no frame, so its margins tighten to book
-        // margins: room for the running-head band up top, page numbers below,
-        // and a modest gutter/edge inset.
-        double fxTop = InPhysicalMode ? 0.06 : FxContentTop;
-        double fxBottom = InPhysicalMode ? 0.95 : FxContentBottom;
-        double fxLL = InPhysicalMode ? 0.045 : FxLeftL;
-        double fxLR = InPhysicalMode ? 0.472 : FxLeftR;
-        double fxRL = InPhysicalMode ? 0.528 : FxRightL;
-        double colLeftX = bookX + fxLL * bookW;
-        double colRightX = bookX + fxRL * bookW;
-        double colW = (fxLR - fxLL) * bookW;
-        double colTopY = fxTop * bookH;
-        double colH = (fxBottom - fxTop) * bookH;
+        double colLeftX = bookX + FxLeftL * bookW;
+        double colRightX = bookX + FxRightL * bookW;
+        double colW = (FxLeftR - FxLeftL) * bookW;
+        double colTopY = FxContentTop * bookH;
+        double colH = (FxContentBottom - FxContentTop) * bookH;
         double contentW = colW;
         double contentH = colH;
 
@@ -1120,8 +1055,6 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         ElementBounds dialogBounds = ElementBounds.Fixed(0, 0, dialogW, dialogH).WithAlignment(EnumDialogArea.CenterMiddle);
         ElementBounds bgBounds = ElementBounds.Fill;
 
-        // Title sits as a running head across the top of the open book, in ink.
-        ElementBounds titleTextBounds = ElementBounds.Fixed(colLeftX, FxTitleY * bookH, (colRightX + colW) - colLeftX, 0.06 * bookH);
         ElementBounds leftText = ElementBounds.Fixed(colLeftX, colTopY, colW, colH);
         ElementBounds rightText = ElementBounds.Fixed(colRightX, colTopY, colW, colH);
         // Journal: one writing area spanning both pages, across the gutter.
@@ -1151,13 +1084,12 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         ElementBounds? rightTabs = hasTabs ? ElementBounds.Fixed(bookX + bookW, colTopY, tabMargin - 6, colH) : null;
 
         // The bookmark tag hangs from the top edge at the book's top-right,
-        // clear of the title. Physical mode only, and only on pages that can
-        // hold a bookmark (regular chapters).
-        ElementBounds? bookmarkTag = InPhysicalMode && CurrentPinnable
+        // clear of the title, on pages that can hold a bookmark (regular chapters).
+        ElementBounds? bookmarkTag = CurrentPinnable
             ? ElementBounds.Fixed(bookX + bookW - 58, 2, 34, 26)
             : null;
 
-        var children = new List<ElementBounds> { titleTextBounds, cornerBounds };
+        var children = new List<ElementBounds> { cornerBounds };
         if (journalMode) children.Add(journalText);
         else if (cropsMode || (externalTab != null && ExternalColsPerSpread() == 4)) children.AddRange(cropsCols);
         else { children.Add(leftText); children.Add(rightText); }
@@ -1171,19 +1103,13 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         string title = weatherMode ? "Weather" : cropsMode ? CropsTitle() : journalMode ? "Journal"
             : externalTab != null ? externalTab.Label
             : (current != null ? library.Title(current) : "The Almanac");
-        physChapterTitle = title;   // the physical header band draws it (running heads)
-
-        var titleFont = CairoFont.WhiteSmallishText()
-            .WithFont(FontRegistry.SerifDecorative)
-            .WithColor(new[] { 0.28, 0.18, 0.10, 1.0 })
-            .WithOrientation(EnumTextOrientation.Center);
+        // The title is not composed as an element: DrawPageFurniture letterspaces
+        // it into the running-head band itself.
+        physChapterTitle = title;
 
         var composer = capi.Gui
             .CreateCompo("illuminatedbook", dialogBounds)
-            .AddStaticCustomDraw(bgBounds, DrawFrame)
-            // Physical mode draws its own running heads in the band; the flat
-            // book keeps the single centered title.
-            .AddStaticText(InPhysicalMode ? "" : title, titleFont, titleTextBounds);
+            .AddStaticCustomDraw(bgBounds, DrawFrame);
 
         if (journalMode)
         {
@@ -1240,30 +1166,20 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         {
             BuildTabStrips(out var lLabels, out var lActions, out var lActive,
                            out var rLabels, out var rActions, out var rActive, out int lBottom);
-            if (InPhysicalMode)
-            {
-                // Physical mode: the tabs are modeled paper slips on the page
-                // edges, drawn and hit-tested by the view — publish the strip
-                // data instead of composing the drawn ribbons.
-                PhysLeftTabs = lLabels; PhysRightTabs = rLabels;
-                PhysLeftActive = lActive; PhysRightActive = rActive;
-                PhysLeftBottom = lBottom; PhysRightBottom = 0;
-                physLeftActions = lActions; physRightActions = rActions;
-            }
-            else
-            {
-                composer.AddInteractiveElement(
-                    new GuiElementChapterTabs(capi, leftTabs!, lLabels, lActive, i => lActions[i](), BookTabSide.Left, lBottom), "lefttabs");
-                composer.AddInteractiveElement(
-                    new GuiElementChapterTabs(capi, rightTabs!, rLabels, rActive, i => rActions[i](), BookTabSide.Right), "righttabs");
-            }
+            // The tabs are modeled paper slips on the page edges, drawn and
+            // hit-tested by the view — publish the strip data rather than
+            // composing drawn ribbons.
+            PhysLeftTabs = lLabels; PhysRightTabs = rLabels;
+            PhysLeftActive = lActive; PhysRightActive = rActive;
+            PhysLeftBottom = lBottom; PhysRightBottom = 0;
+            physLeftActions = lActions; physRightActions = rActions;
         }
 
         // Added last so it sits atop the pages: link clicks resolve first, then the
         // corners. It only acts in the bottom-outer corners; elsewhere clicks pass through.
         corners = new GuiElementPageCorners(capi, cornerBounds, OnTurnComplete, PlayPageTurnSound,
             forward => forward ? CanGoNext() : CanGoPrev(),
-            InPhysicalMode ? fwd => PhysicalMirror!.BeginPageTurn(fwd) : null);
+            fwd => PhysicalMirror!.BeginPageTurn(fwd));
         composer.AddInteractiveElement(corners, "pagecorners");
 
         SingleComposer = composer.Compose();
@@ -1343,7 +1259,7 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         int section = CurrentNavSection();
         int spread = spreadIndex;
 
-        if (navValid && InPhysicalMode)
+        if (navValid)
         {
             int dist;
             bool forward;
@@ -1546,91 +1462,13 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     }
 
     /// <summary>
-    /// The open-book art (leather board, brackets, and both parchment pages),
-    /// scaled to the book region. Margins outside it stay clear so the tab ribbons
-    /// read as hanging off the edges. Falls back to a flat leather rect if the art
-    /// will not load. Art: Wanderer's Sketchbook by JeanPierre, used by permission.
+    /// The page faces under the text. The modeled book IS the book — covers, page
+    /// edges, spine — so nothing paints boards here; this composes the two
+    /// parchment faces and the centre-gutter shadow that makes two bound pages
+    /// out of what would otherwise read as one long sheet.
     /// </summary>
     private void DrawFrame(Context ctx, ImageSurface surface, ElementBounds b)
-    {
-        // Physical mode: the 3D model IS the book — covers, page edges, spine.
-        // The painted frame art would layer the old drawn book over the modeled
-        // one; instead compose the page faces themselves: warm parchment with a
-        // center-gutter shadow, the cue that makes two bound pages out of what
-        // otherwise reads as one long sheet. Compose-time check is safe: the
-        // dialog always recomposes on open, physical mode is set before TryOpen.
-        if (InPhysicalMode)
-        {
-            DrawPhysicalPages(ctx, b);
-            return;
-        }
-
-        frameSurface ??= TryLoadFrame();
-        double dx = b.drawX + boardLeftPx, dy = b.drawY, dw = boardWpx, dh = bookHpx;
-
-        if (frameSurface == null)
-        {
-            ctx.SetSourceRGBA(0.17, 0.11, 0.07, 1);
-            ctx.Rectangle(dx, dy, dw, dh);
-            ctx.Fill();
-            return;
-        }
-
-        ctx.Save();
-        var pattern = new SurfacePattern(frameSurface);
-        var m = new Matrix();
-        m.Scale(frameSurface.Width / dw, frameSurface.Height / dh);
-        m.Translate(-dx, -dy);
-        pattern.Matrix = m;
-        pattern.Filter = Filter.Best;
-        ctx.SetSource(pattern);
-        ctx.Rectangle(dx, dy, dw, dh);
-        ctx.Fill();
-        ctx.Restore();
-        pattern.Dispose();
-
-        DrawFooterNumbers(ctx, dx, dy);
-    }
-
-    /// <summary>
-    /// Codex page numbers in each page's footer, with a faint sepia rule above, as
-    /// fractions of the book plate. Bare numerals, lighter than body ink, the way a
-    /// printed folio sets its page number.
-    /// </summary>
-    private void DrawFooterNumbers(Context ctx, double bookDrawX, double bookDrawY)
-    {
-        double X(double f) => bookDrawX + f * boardWpx;
-        double Y(double f) => bookDrawY + f * bookHpx;
-
-        const double ruleY = 0.885, numY = 0.905;
-
-        ctx.LineWidth = GuiElement.scaled(0.7);
-        ctx.SetSourceRGBA(0.28, 0.18, 0.10, 0.35);
-        if (leftPageNum > 0) { ctx.NewPath(); ctx.MoveTo(X(FxLeftL), Y(ruleY)); ctx.LineTo(X(FxLeftR), Y(ruleY)); ctx.Stroke(); }
-        if (rightPageNum > 0) { ctx.NewPath(); ctx.MoveTo(X(FxRightL), Y(ruleY)); ctx.LineTo(X(FxRightR), Y(ruleY)); ctx.Stroke(); }
-
-        void Glyph(CairoFont f, string g, double cx, double cy)
-        {
-            f.SetupContext(ctx);
-            var te = ctx.TextExtents(g);
-            ctx.NewPath();
-            ctx.MoveTo(X(cx) - (te.Width / 2 + te.XBearing), Y(cy));
-            ctx.ShowText(g);
-        }
-
-        // An external tab's folio counts within its own view ("2 of 6"), a bit larger
-        // than the bare codex numeral so the position reads at a glance.
-        var numFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody)
-            .WithFontSize(footerPageTotal > 0 ? 15f : 13f).WithColor(new[] { 0.28, 0.18, 0.10, 0.70 });
-        string FolioText(int n) => footerPageTotal > 0 ? $"{n} of {footerPageTotal}" : n.ToString();
-        if (leftPageNum > 0) Glyph(numFont, FolioText(leftPageNum), (FxLeftL + FxLeftR) / 2, numY);
-        if (rightPageNum > 0) Glyph(numFont, FolioText(rightPageNum), (FxRightL + FxRightR) / 2, numY);
-
-        // Faint turn cues in the bottom-outer corners, only where a turn exists.
-        var cueFont = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody).WithFontSize(20f).WithColor(new[] { 0.28, 0.18, 0.10, 0.28 });
-        if (CanGoPrev()) Glyph(cueFont, "‹", FxLeftL + 0.01, numY);
-        if (CanGoNext()) Glyph(cueFont, "›", FxRightR - 0.01, numY);
-    }
+        => DrawPhysicalPages(ctx, b);
 
     /// <summary>
     /// The physical-mode page background, in the game's own pixel language:
@@ -1794,12 +1632,6 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         if (rightPageNum > 0) Foot(FolioText(rightPageNum), rightCx);
     }
 
-    private ImageSurface? TryLoadFrame()
-    {
-        try { return GuiElement.getImageSurfaceFromAsset(capi, FrameAsset); }
-        catch (Exception e) { IlluminatedLogger.Warn(capi, "book", $"Book frame art failed to load: {e.Message}"); return null; }
-    }
-
     /// <summary>The flip animation landed: swap the spread (silently, the turn already sounded).</summary>
     private void OnTurnComplete(bool forward)
     {
@@ -1881,7 +1713,7 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     /// </summary>
     public override bool TryClose()
     {
-        if (InPhysicalMode && !PhysicalMirror!.StowComplete)
+        if (!PhysicalMirror!.StowComplete)
         {
             // Release the reading pause as the stow BEGINS, not when the dialog finally
             // closes. Two reasons. Feel: the stow is already "done reading", so the world
@@ -1913,16 +1745,7 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         if (pausedByBook) { capi.PauseGame(false); pausedByBook = false; }
         OnReadingChanged?.Invoke(false);
         if (journalDirty) SaveJournal();
-        frameSurface?.Dispose();
-        frameSurface = null;
         base.OnGuiClosed();
-    }
-
-    public override void Dispose()
-    {
-        shadeWhiteTex?.Dispose();
-        shadeWhiteTex = null;
-        base.Dispose();
     }
 
     public override bool PrefersUngrabbedMouse => true;

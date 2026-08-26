@@ -6,12 +6,10 @@ using Vintagestory.API.Common;
 namespace AlmanacIlluminated;
 
 /// <summary>
-/// The page-turn corners. At rest the book draws nothing here; faint ‹ › cues sit
-/// in the bottom-outer corners (drawn by the dialog). Click a corner, or the
-/// Prev/Next buttons, and the full five-frame turn plays over the book before the
-/// spread swaps. The flip art is the whole book with blank pages, which reads as a
-/// page physically turning.
-/// Art: Wanderer's Sketchbook by JeanPierre, used by permission.
+/// The page-turn corners: a hit region in each bottom-outer corner. Clicking one,
+/// or the Prev/Next buttons, arms the modeled sheet turn and swaps the spread
+/// under it. Nothing is drawn here — the turn is 3D geometry in the view. (Until
+/// 0.2.0 this also played a five-frame PNG turn for the flat page.)
 /// </summary>
 public class GuiElementPageCorners : GuiElement
 {
@@ -19,29 +17,17 @@ public class GuiElementPageCorners : GuiElement
     private readonly Action onTurnStart;
     private readonly System.Func<bool, bool> canTurn;      // forward? -> is there a page that way
 
-    // Physical mode: the 3D sheet turn replaces the PNG flip art. The callback
-    // snapshots the old spread and arms the sheet; the spread then swaps
-    // immediately (the animation carries the transition). Null in flat mode.
-    private readonly System.Func<bool, bool>? physicalTurn;
-
-    private readonly int[] flipRight = new int[5];
-    private readonly int[] flipLeft = new int[5];
-    private bool loaded;
-
-    private bool animating;
-    private bool animForward;
-    private float animElapsed;
-
-    private const float Total = 0.280f;
-    // Per-frame cutoffs: frame 2 until .056, 3 until .140, 4 until .224, 5 until .280.
-    private static readonly float[] Cutoffs = { 0.056f, 0.140f, 0.224f, 0.280f };
+    // The modeled sheet turn: the callback snapshots the old spread and arms the
+    // sheet; the spread then swaps immediately, the animation carrying the transition.
+    private readonly System.Func<bool, bool> physicalTurn;
 
     private const double HitFrac = 0.22;       // corner activation, fraction of the book
-    private const float OverZ = 600;
 
-    public bool Busy => animating;
+    /// <summary>Kept for callers that gate on a turn in flight. The modeled turn owns
+    /// its own timing now, so this element is never busy.</summary>
+    public bool Busy => false;
 
-    public GuiElementPageCorners(ICoreClientAPI capi, ElementBounds bounds, Action<bool> onTurnComplete, Action onTurnStart, System.Func<bool, bool> canTurn, System.Func<bool, bool>? physicalTurn = null) : base(capi, bounds)
+    public GuiElementPageCorners(ICoreClientAPI capi, ElementBounds bounds, Action<bool> onTurnComplete, Action onTurnStart, System.Func<bool, bool> canTurn, System.Func<bool, bool> physicalTurn) : base(capi, bounds)
     {
         this.onTurnComplete = onTurnComplete;
         this.onTurnStart = onTurnStart;
@@ -54,62 +40,18 @@ public class GuiElementPageCorners : GuiElement
         Bounds.CalcWorldBounds();   // nothing static to draw; the art blits at render time
     }
 
-    private void EnsureLoaded()
-    {
-        if (loaded) return;
-        loaded = true;
-        for (int i = 0; i < 5; i++)
-        {
-            flipRight[i] = api.Render.GetOrLoadTexture(new AssetLocation($"almanacilluminated:textures/gui/flip/{i + 1}-5_right_flip.png"));
-            flipLeft[i] = api.Render.GetOrLoadTexture(new AssetLocation($"almanacilluminated:textures/gui/flip/{i + 1}-5_left_flip.png"));
-        }
-    }
-
-    /// <summary>Begin a turn. Forward turns the bottom-right corner; back turns the left.</summary>
+    /// <summary>Begin a turn. Forward turns the bottom-right corner; back turns the left.
+    /// The sheet carries the visual: snapshot first, then swap the spread immediately so
+    /// the new page composes underneath it.</summary>
     public void StartTurn(bool forward)
     {
-        if (animating) return;
-
-        if (physicalTurn != null)
-        {
-            // The 3D sheet carries the visual; snapshot first, then swap the
-            // spread immediately so the new page composes under the sheet.
-            physicalTurn(forward);
-            onTurnStart?.Invoke();
-            onTurnComplete(forward);
-            return;
-        }
-
-        animating = true;
-        animForward = forward;
-        animElapsed = 0;
+        physicalTurn(forward);
         onTurnStart?.Invoke();
-    }
-
-    public override void RenderInteractiveElements(float dt)
-    {
-        EnsureLoaded();
-        if (!animating) return;
-
-        animElapsed += dt;
-        if (animElapsed >= Total) { animating = false; onTurnComplete(animForward); return; }
-
-        int tex = (animForward ? flipRight : flipLeft)[FrameAt(animElapsed)];
-        if (tex != 0)
-            api.Render.Render2DTexture(tex, (float)Bounds.renderX, (float)Bounds.renderY,
-                (float)Bounds.InnerWidth, (float)Bounds.InnerHeight, OverZ);
-    }
-
-    private static int FrameAt(float t)
-    {
-        for (int i = 0; i < Cutoffs.Length; i++)
-            if (t < Cutoffs[i]) return i + 1;   // frames 2..5 (index 1..4)
-        return 4;
+        onTurnComplete(forward);
     }
 
     public override void OnMouseDownOnElement(ICoreClientAPI api, MouseEvent args)
     {
-        if (animating) { args.Handled = true; return; }
         int c = CornerAt(args.X, args.Y);
         if (c == 0) return;          // not a corner: leave the click for the page beneath
         bool forward = c > 0;
