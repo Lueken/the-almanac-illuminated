@@ -304,9 +304,21 @@ public static class CropsRenderer
         if (e.Produce != null)
             comps.Add(new ItemstackTextComponent(capi, FreshIcon(capi, e.Produce), 40, 6, EnumFloat.Left));
 
-        string source = e.Vanilla ? "vanilla" : capi.ModLoader.GetMod(e.SourceDomain)?.Info?.Name ?? e.SourceDomain;
-        comps.Add(new RichTextComponent(capi, e.DisplayName + "  ", stranger ? f.NameFaint : f.Name));
-        comps.Add(new RichTextComponent(capi, source + "\n", f.Muted));
+        // The source label used to read "vanilla" for anything in the base game's domain, and
+        // that was a claim the code could not back. A mod may ship its blocktypes under
+        // assets/game/ and register straight into the base domain, which is exactly what
+        // Mycodiversity does: all 36 of its mushrooms carry domain "game" and every one of them
+        // was captioned "vanilla". Nor can it be repaired by looking harder. A block holds no
+        // record of which mod supplied it, and one blocktype file with variant groups becomes
+        // many blocks, so there is no honest path from a Block back to an origin.
+        //
+        // So the label is now only ever printed when it is true: a domain of its own means a
+        // mod, and a mod can be named. Unmarked means the base domain and nothing more is
+        // asserted, which is also the older and more legible convention.
+        string? source = e.Vanilla ? null : capi.ModLoader.GetMod(e.SourceDomain)?.Info?.Name ?? e.SourceDomain;
+        comps.Add(new RichTextComponent(capi, e.DisplayName + (source == null ? "\n" : "  "),
+            stranger ? f.NameFaint : f.Name));
+        if (source != null) comps.Add(new RichTextComponent(capi, source + "\n", f.Muted));
 
         if (st != null) AddProgress(capi, comps, st, marks, f);
 

@@ -37,6 +37,13 @@ public sealed class CropEntry
     public int GrowthStages;
     public bool MultipleHarvests;
 
+    /// <summary>
+    /// True when the produce declares the BASE GAME's domain. That is not the same as being
+    /// vanilla content and must never be captioned as such: a mod is free to ship its
+    /// blocktypes under assets/game/ and register straight into the base domain, which is
+    /// what Mycodiversity does for all 36 of its mushrooms. Read this as "carries no domain
+    /// of its own", which is all the block registry actually knows.
+    /// </summary>
     public bool Vanilla => SourceDomain is "game" or "survival";
 }
 
@@ -76,7 +83,9 @@ public static class CropCatalog
     public static void LogSummary(ICoreClientAPI capi, List<CropEntry> entries, BlockPos? homebase = null)
     {
         var byKind = entries.GroupBy(e => e.Kind).Select(g => $"{g.Key} {g.Count()}");
-        var bySource = entries.GroupBy(e => e.Vanilla ? "vanilla" : e.SourceDomain)
+        // Grouped by the raw domain, never relabelled "vanilla". A mod registering into the
+        // base domain lands in the "game" bucket, which is true, where "vanilla" would not be.
+        var bySource = entries.GroupBy(e => e.SourceDomain)
             .OrderByDescending(g => g.Count())
             .Select(g => $"{g.Key} {g.Count()}");
         string at = homebase != null ? $" — homebase climate at {homebase}" : "";
