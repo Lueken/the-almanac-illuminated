@@ -364,22 +364,49 @@ public static class CropCatalog
     }
 
     /// <summary>
-    /// Fruit trees: each type in the branch block's TypeProps. The fruit is the type's
+    /// Fruit trees: each type in every branch block's TypeProps. The fruit is the type's
     /// resolved FruitStacks; cold hardiness is DieBelowTemp (no upper limit), and the
     /// growth figure sums the flowering, fruiting, and ripening days.
+    ///
+    /// Vanilla registers one BlockFruitTreeBranch per variant and they all share the one
+    /// TypeProps dictionary loaded from a single blocktype file, so taking every block would
+    /// list every fruit dozens of times. What we want is one representative per BLOCKTYPE, so
+    /// blocks are grouped by domain and first code part, and a mod that ships its own branch
+    /// blocktype contributes its roster alongside vanilla's instead of one silently winning.
+    ///
+    /// This used to take FirstOrDefault of all branch blocks, which meant exactly one roster
+    /// could ever be seen. Nothing in The Quire's pack is hidden by that today, verified
+    /// 2026-08-26: the pack's only other fruit tree blocktype is bdorchard's, and it declares
+    /// class BlockDynamicTreeBranch, a name that appears in none of the pack's 185 assemblies
+    /// and none of the game's 6, so it cannot be a BlockFruitTreeBranch and was never visible
+    /// here to begin with. The roster count is logged now so that question is answerable from
+    /// a log line rather than from a byte scan of the mod folder.
     /// </summary>
     private static List<CropEntry> BuildFruitTrees(ICoreClientAPI capi)
     {
         var entries = new List<CropEntry>();
-        var branch = capi.World.Blocks.OfType<BlockFruitTreeBranch>().FirstOrDefault(b => b.TypeProps != null);
-        if (branch == null) return entries;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var (_, props) in branch.TypeProps)
+        var rosters = capi.World.Blocks
+            .OfType<BlockFruitTreeBranch>()
+            .Where(b => b.TypeProps != null && b.Code != null)
+            .GroupBy(b => b.Code.Domain + ":" + b.Code.FirstCodePart())
+            .ToList();
+
+        IlluminatedLogger.Info(capi, "crops",
+            $"Fruit tree rosters: {rosters.Count} — {string.Join(", ", rosters.Select(g => $"{g.Key} ({g.First().TypeProps.Count} types)"))}");
+
+        foreach (var roster in rosters)
+        foreach (var (_, props) in roster.First().TypeProps)
         {
             var produce = props.FruitStacks?
                 .Select(d => d?.ResolvedItemstack)
                 .FirstOrDefault(s => s?.Collectible?.Code != null);
             if (produce?.Collectible?.Code == null) continue;
+
+            // One card per produce. Two rosters offering the same fruit would otherwise print
+            // the same tree twice, and the reader has no way to tell which row is which.
+            if (!seen.Add(produce.Collectible.Code.ToString())) continue;
 
             entries.Add(new CropEntry
             {
