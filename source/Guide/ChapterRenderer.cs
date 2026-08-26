@@ -84,8 +84,25 @@ public static class ChapterRenderer
             .WithFontSize(16.5f).WithLineHeightMultiplier(1.12).WithColor(Ink);
         var italic = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifBody)
             .WithFontSize(16.5f).WithLineHeightMultiplier(1.12).WithSlant(Cairo.FontSlant.Italic).WithColor(Ink);
+        // The drop cap floats left and the paragraph wraps around whatever height it
+        // MEASURES, which is the font's line box and not the ink of the letter.
+        //
+        // At 50pt with no multiplier the box is 50px against a body line of
+        // 16.5 x 1.12 = 18.48px. That is 2.71 lines, and a float reserves whole lines,
+        // so three lines were indented while the letter's cap-height only reached into
+        // about 1.9 of them. The third line cleared a letter that had already ended,
+        // which reads as a hole punched under the capital.
+        //
+        // Pinning the multiplier makes the reserved box exactly two body lines
+        // (18.48 x 2 = 36.96, so 36.96 / 50 = 0.739) without touching the size of the
+        // letter itself. Two lines is also the ordinary book setting for a cap this
+        // size. Keep this derived rather than a magic number: if the body font or its
+        // multiplier moves, recompute it, because the whole point is the ratio.
+        const float DropCapPt = 50f;
+        const float DropCapLines = 2f;
         var dropCap = CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifDecorative)
-            .WithFontSize(50f).WithWeight(Cairo.FontWeight.Bold).WithColor(accent);
+            .WithFontSize(DropCapPt).WithWeight(Cairo.FontWeight.Bold).WithColor(accent)
+            .WithLineHeightMultiplier(16.5f * 1.12f * DropCapLines / DropCapPt);
 
         string initial = DeriveInitial(pack.Byline, pack.Title);
         var atoms = new List<Atom>();
