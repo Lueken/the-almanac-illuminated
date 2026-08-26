@@ -355,10 +355,19 @@ public static class CropCatalog
     /// from being filed under "Rot": after dedupe on produce, five separate crops in that
     /// state collapsed into one "Rot" card and one "Dry grass" card, and vanished from
     /// their families.
+    ///
+    /// Plant debris joined the list on 2026-08-26, from the same failure showing up on the
+    /// BUSHES pages as a card reading "Plant debris". The base game says outright what it is,
+    /// in block-handbooktext-fruitingbush-*: "Wild fruiting bushes cannot be moved - if you
+    /// break them they will just drop plant debris." So it is litter by the game's own account,
+    /// and it was the first drop this filter did not reject. Matched on the prefix rather than
+    /// the whole code because the base game ships one variant, plantdebris-leafy, and there is
+    /// no reason a pack could not add another.
     /// </summary>
     private static bool IsNotProduce(string path) =>
         path.StartsWith("seeds-", StringComparison.OrdinalIgnoreCase) ||
         path.StartsWith("seed-", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("plantdebris", StringComparison.OrdinalIgnoreCase) ||
         path.Contains("cutting", StringComparison.OrdinalIgnoreCase) ||
         path.Contains("berrybush", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("rot", StringComparison.OrdinalIgnoreCase) ||
@@ -453,6 +462,13 @@ public static class CropCatalog
                 DrawAtBest = BestDraw(growth),
             });
         }
+
+        // Cards, not blocks. The count above says what was considered; this says what survived
+        // resolution and the produce dedupe, and the gap between them is where a bush goes
+        // quiet. A block whose real produce cannot resolve does not error, it simply drops out
+        // or collapses onto whatever code it did resolve to, which is how fifteen blocks read
+        // as one card named "Plant debris" and nobody noticed until it was on the page.
+        IlluminatedLogger.Info(capi, "crops", $"Berry bushes: {entries.Count} card(s) after produce dedupe");
         return entries;
     }
 
