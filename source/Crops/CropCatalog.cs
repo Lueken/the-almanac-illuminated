@@ -330,23 +330,53 @@ public static class CropCatalog
     }
 
     /// <summary>
-    /// Berry bushes: any block coded "berrybush" at its ripe state. Growing band comes
-    /// from the block attributes the bush's growth check reads (stop-below/above temp);
-    /// the berry is the ripe bush's food drop.
+    /// Berry bushes, one entry per species, read from the LIVE blocktype first.
+    ///
+    /// This method used to match any block whose path contained "berrybush" at variant
+    /// state "ripe", and on 1.22 that reaches only vanilla's legacy blocktypes. Verified
+    /// against the 1.22 assets on 2026-08-26:
+    ///
+    ///   survival/blocktypes/plant/fruitingbush.json    code "fruitingbush", TEN species,
+    ///                                                  variants state(wild|grown) x type x
+    ///                                                  cover(free|snow)
+    ///   survival/blocktypes/legacy/bigberrybush.json   redcurrant, blackcurrant, whitecurrant
+    ///   survival/blocktypes/legacy/smallberrybush.json blueberry, cranberry
+    ///
+    /// So the page listed the five legacy species and silently dropped beautyberry,
+    /// blackberry, cloudberry, raspberry and strawberry, which exist only on the live
+    /// blocktype. Neither legacy file is disabled, so they still register and would double
+    /// every species they share if both sources were taken; hence live wins and legacy is
+    /// only a fallback for a world that somehow has no fruitingbush at all.
+    ///
+    /// The "ripe" test is what hid it. On the legacy bushes state IS ripeness
+    /// (empty|flowering|ripe), but on the live bush state means WILD or GROWN and ripeness
+    /// lives on the block entity instead, so the same filter means two different things.
+    /// Here it is only applied to legacy, where it still means what it used to.
+    ///
+    /// Temperatures moved too. Legacy keeps stopBelow/AboveTemperature at the top of its
+    /// attributes; the live bush keeps the same 4 and 30 under
+    /// growthProperties.pauseGrowthBelow/AboveTemperature. Both are read, live name first.
     /// </summary>
     private static List<CropEntry> BuildBerryBushes(ICoreClientAPI capi)
     {
         var entries = new List<CropEntry>();
-        foreach (var block in capi.World.Blocks)
-        {
-            if (block?.Code == null) continue;
-            if (!block.Code.Path.Contains("berrybush", StringComparison.OrdinalIgnoreCase)) continue;
-            if (block.Variant != null && block.Variant.TryGetValue("state", out var state)
-                && !state.Equals("ripe", StringComparison.OrdinalIgnoreCase)) continue;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        // Live first, then legacy, so a species present in both is taken from the live
+        // blocktype and the legacy copy falls out on the produce-code dedup below.
+        var live = capi.World.Blocks.Where(IsLiveFruitingBush).ToList();
+        var legacy = capi.World.Blocks.Where(IsLegacyRipeBerryBush).ToList();
+
+        IlluminatedLogger.Info(capi, "crops",
+            $"Berry bushes: {live.Count} live fruitingbush block(s), {legacy.Count} legacy ripe block(s)");
+
+        foreach (var block in live.Concat(legacy))
+        {
             var produce = ResolveProduce(capi, block);
             if (produce?.Collectible?.Code == null) continue;
+            if (!seen.Add(produce.Collectible.Code.ToString())) continue;
 
+            var growth = block.Attributes?["growthProperties"];
             entries.Add(new CropEntry
             {
                 Kind = CropKind.BerryBush,
@@ -355,13 +385,45 @@ public static class CropCatalog
                 SourceDomain = produce.Collectible.Code.Domain,
                 Produce = produce,
                 PlantBlock = block,
-                ColdDamageBelow = block.Attributes?["stopBelowTemperature"].AsFloat(float.NaN) ?? float.NaN,
-                HeatDamageAbove = block.Attributes?["stopAboveTemperature"].AsFloat(float.NaN) ?? float.NaN,
+                ColdDamageBelow = Temp(growth, "pauseGrowthBelowTemperature")
+                    ?? block.Attributes?["stopBelowTemperature"].AsFloat(float.NaN) ?? float.NaN,
+                HeatDamageAbove = Temp(growth, "pauseGrowthAboveTemperature")
+                    ?? block.Attributes?["stopAboveTemperature"].AsFloat(float.NaN) ?? float.NaN,
                 MultipleHarvests = true,
             });
         }
         return entries;
     }
+
+    /// <summary>Null rather than NaN when the key is absent, so the caller can fall through
+    /// to the legacy attribute name instead of committing to a missing value.</summary>
+    private static float? Temp(Vintagestory.API.Datastructures.JsonObject? growth, string key)
+    {
+        float v = growth?[key].AsFloat(float.NaN) ?? float.NaN;
+        return float.IsNaN(v) ? null : v;
+    }
+
+    /// <summary>One representative block per live species: grown rather than wild, and
+    /// unsnowed, so the entry describes a bush somebody is keeping rather than a chance
+    /// find under snow. Ripeness is not a variant here, so it is not tested.</summary>
+    private static bool IsLiveFruitingBush(Block? block)
+    {
+        if (block?.Code == null || block.Variant == null) return false;
+        if (!block.Code.FirstCodePart().Equals("fruitingbush", StringComparison.OrdinalIgnoreCase)) return false;
+        return Variant(block, "state") == "grown" && Variant(block, "cover") == "free";
+    }
+
+    /// <summary>The pre-1.22 bushes, kept only so a world without the live blocktype still
+    /// lists something. Here "state" really does mean ripeness.</summary>
+    private static bool IsLegacyRipeBerryBush(Block? block)
+    {
+        if (block?.Code == null) return false;
+        if (!block.Code.Path.Contains("berrybush", StringComparison.OrdinalIgnoreCase)) return false;
+        return block.Variant == null || Variant(block, "state") == "ripe";
+    }
+
+    private static string? Variant(Block block, string key) =>
+        block.Variant != null && block.Variant.TryGetValue(key, out var v) ? v.ToLowerInvariant() : null;
 
     /// <summary>
     /// Fruit trees: each type in every branch block's TypeProps. The fruit is the type's
