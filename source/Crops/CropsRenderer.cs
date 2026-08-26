@@ -198,7 +198,7 @@ public static class CropsRenderer
     private static List<RichTextComponentBase> Heading(ICoreClientAPI capi, string title, bool spaceAbove, Fonts f) =>
         new()
         {
-            new RichTextComponent(capi, title + "\n", f.Header) { UnscaledMarginTop = spaceAbove ? 14 : 0 },
+            new RichTextComponent(capi, title + "\n", f.Header) { UnscaledMarginTop = spaceAbove ? 22 : 0 },
         };
 
     /// <summary>
@@ -211,6 +211,14 @@ public static class CropsRenderer
         double spread, bool spaceAbove, Fonts f)
     {
         var head = Heading(capi, fam.Name.ToUpperInvariant(), spaceAbove, f);
+
+        // The family break. Its own mark, not the Callings tab's diamond: both tabs group
+        // things, but a reader who learns the diamond means a strand of callings should not
+        // meet it again meaning a family of plants. Without any rule at all a page of
+        // families read as one column of text with bold words in it.
+        head.Add(new SownRuleComponent(capi, 12));
+        head.Add(new ClearFloatTextComponent(capi, 3));
+
         head.Add(new RichTextComponent(capi, FamilyVoice(fam, spread) + "\n", f.Voice));
 
         if (!string.IsNullOrEmpty(fam.Note))
@@ -254,7 +262,7 @@ public static class CropsRenderer
             comps.Add(new RichTextComponent(capi, MaskedName(e.Kind) + "  ", f.Name));
             comps.Add(new RichTextComponent(capi, KindLabel(e.Kind) + "\n", f.Muted));
             comps.Add(new RichTextComponent(capi, "Not yet identified\n", f.Window));
-            comps.Add(new ClearFloatTextComponent(capi, 12));
+            comps.Add(new ClearFloatTextComponent(capi, 15));
             return comps;
         }
 
@@ -303,7 +311,7 @@ public static class CropsRenderer
         if (!identified)
             comps.Add(new RichTextComponent(capi, $"Learning… {(int)(know * 100)}%\n", f.Muted));
 
-        comps.Add(new ClearFloatTextComponent(capi, 12));
+        comps.Add(new ClearFloatTextComponent(capi, 15));
         return comps;
     }
 
