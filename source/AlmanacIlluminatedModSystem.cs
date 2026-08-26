@@ -32,6 +32,31 @@ public class AlmanacIlluminatedModSystem : ModSystem
     private bool homebaseProvisional;
     private Action? onHomebaseReceived;
 
+    /// <summary>The live client-side instance, for renderers that need session state the
+    /// page-building call chain does not carry. Client only and cleared on dispose, matching
+    /// the ClientInstance pattern the sibling mod already uses.</summary>
+    public static AlmanacIlluminatedModSystem? Instance;
+
+    // The forage atlas (Crops tab, mushrooms): worldgen habitat envelopes, which are a
+    // server-only asset category. Requested once per session alongside the homebase and
+    // cached; null simply means the card falls back to what the block registry already
+    // gives it, which is the same graceful-degradation posture the familiarity supplier
+    // takes when no supplier is registered.
+    private Dictionary<string, ForageAtlasRow>? forageAtlas;
+    private float homeRain = -1f, homeForest = -1f, atlasMedianRain = 0.4f;
+    private bool forageAtlasRequested;
+
+    /// <summary>Habitat row for a species key, or null when no atlas has arrived.</summary>
+    public ForageAtlasRow? ForageRowFor(string produceCode)
+    {
+        if (forageAtlas == null) return null;
+        return forageAtlas.TryGetValue(ForageAtlas.Key(produceCode), out var row) ? row : null;
+    }
+
+    public float HomeRain => homeRain;
+    public float HomeForest => homeForest;
+    public float AtlasMedianRain => atlasMedianRain;
+
     // Book tabs registered by other mods (TCM's Callings first). Initialized
     // inline so registration is safe regardless of ModSystem start order.
     private readonly List<IAlmanacBookTab> bookTabs = new();
@@ -206,7 +231,10 @@ public class AlmanacIlluminatedModSystem : ModSystem
             .RegisterMessageType<HomebaseRequest>()
             .RegisterMessageType<HomebaseResponse>()
             .RegisterMessageType<ReadingState>()
+            .RegisterMessageType<ForageAtlasRequest>()
+            .RegisterMessageType<ForageAtlasResponse>()
             .SetMessageHandler<HomebaseRequest>(OnHomebaseRequest)
+            .SetMessageHandler<ForageAtlasRequest>(OnForageAtlasRequest)
             .SetMessageHandler<ReadingState>(OnReadingState);
 
         // A crash or disconnect mid-read must not strand the flag: reading state is
@@ -226,6 +254,43 @@ public class AlmanacIlluminatedModSystem : ModSystem
         wa.MarkPathDirty(ReadingHands.Attr);
     }
 
+    /// <summary>
+    /// Build the atlas and answer with it, plus the reader's own ground.
+    ///
+    /// Rebuilt per request rather than cached server-side. It is one walk of an asset
+    /// category that is already in memory, it happens once per player per session, and a
+    /// cache would need an invalidation story for a thing that cannot change without a
+    /// restart. Cheap beats clever here.
+    /// </summary>
+    private void OnForageAtlasRequest(IServerPlayer fromPlayer, ForageAtlasRequest req)
+    {
+        if (sapi == null) return;
+        try
+        {
+            var rows = ForageAtlas.Build(sapi);
+            var reply = new ForageAtlasResponse { Rows = rows, MedianRain = ForageAtlas.MedianRain(rows) };
+
+            // Worldgen rainfall and forest density at the bound spawn, read on the side that
+            // is known to resolve them. WorldGenValues is what populates ForestDensity.
+            var pos = fromPlayer.GetSpawnPosition(false);
+            var climate = sapi.World.BlockAccessor.GetClimateAt(
+                new BlockPos((int)pos.X, (int)pos.Y, (int)pos.Z), EnumGetClimateMode.WorldGenValues);
+            if (climate != null)
+            {
+                reply.HomeRain = climate.Rainfall;
+                reply.HomeForest = climate.ForestDensity;
+            }
+
+            serverChannel?.SendPacket(reply, fromPlayer);
+            IlluminatedLogger.Info(sapi, "crops",
+                $"forage atlas sent to {fromPlayer.PlayerName}: {rows.Count} mushroom row(s), median minRain {reply.MedianRain:0.##}, home rain {reply.HomeRain:0.##} forest {reply.HomeForest:0.##}");
+        }
+        catch (Exception e)
+        {
+            IlluminatedLogger.Warn(sapi, "crops", $"forage atlas build failed ({e.Message}); client keeps its plain cards");
+        }
+    }
+
     private void OnHomebaseRequest(IServerPlayer fromPlayer, HomebaseRequest req)
     {
         var pos = fromPlayer.GetSpawnPosition(false);   // resolved: bed spawn, else world default
@@ -239,6 +304,24 @@ public class AlmanacIlluminatedModSystem : ModSystem
             Z = (int)pos.Z,
             BedSpawn = bed,
         }, fromPlayer);
+    }
+
+    private void OnForageAtlasResponse(ForageAtlasResponse msg)
+    {
+        var map = new Dictionary<string, ForageAtlasRow>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in msg.Rows) map[row.Key] = row;
+        forageAtlas = map;
+        homeRain = msg.HomeRain;
+        homeForest = msg.HomeForest;
+        atlasMedianRain = msg.MedianRain;
+
+        if (capi != null)
+            IlluminatedLogger.Info(capi, "crops",
+                $"forage atlas received: {map.Count} mushroom row(s), median minRain {atlasMedianRain:0.##}");
+
+        // Cards already drawn were built without habitat lines. Redraw so the reader is not
+        // left with a thinner page than the data now supports.
+        bookDialog?.RefreshSpread();
     }
 
     private void OnHomebaseResponse(HomebaseResponse msg)
@@ -281,6 +364,13 @@ public class AlmanacIlluminatedModSystem : ModSystem
         {
             onHomebaseReceived = onReady;
             clientChannel!.SendPacket(new HomebaseRequest());
+            // Same trip, same conditions: the atlas cannot change without a restart, so one
+            // ask per session is enough and nothing waits on the answer.
+            if (!forageAtlasRequested)
+            {
+                forageAtlasRequested = true;
+                clientChannel!.SendPacket(new ForageAtlasRequest());
+            }
             return;
         }
 
@@ -300,12 +390,16 @@ public class AlmanacIlluminatedModSystem : ModSystem
     public override void StartClientSide(ICoreClientAPI api)
     {
         capi = api;
+        Instance = this;
 
         clientChannel = api.Network.RegisterChannel(ChannelName)
             .RegisterMessageType<HomebaseRequest>()
             .RegisterMessageType<HomebaseResponse>()
             .RegisterMessageType<ReadingState>()
-            .SetMessageHandler<HomebaseResponse>(OnHomebaseResponse);
+            .RegisterMessageType<ForageAtlasRequest>()
+            .RegisterMessageType<ForageAtlasResponse>()
+            .SetMessageHandler<HomebaseResponse>(OnHomebaseResponse)
+            .SetMessageHandler<ForageAtlasResponse>(OnForageAtlasResponse);
 
         // The in-hands book (renderer patch). Init only wires the hook; the dummy
         // item resolves lazily on first render, after registries are ready.
@@ -1128,6 +1222,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
 
     public override void Dispose()
     {
+        // Only drop the handle if it still points at this instance: a client and a server
+        // ModSystem both run in singleplayer, and a blind null would strand the survivor.
+        if (ReferenceEquals(Instance, this)) Instance = null;
         ReadingHands.Dispose();
         StopPreviewWatcher();
         physicalView?.Dispose();

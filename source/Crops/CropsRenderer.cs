@@ -346,6 +346,21 @@ public static class CropsRenderer
             // a client-side renderer without a packet.
             string warn = WarningLine(e);
             if (warn.Length > 0) comps.Add(new RichTextComponent(capi, warn + "\n", f.Voice));
+
+            // The habitat and ground lines need the forage atlas, which only exists once the
+            // server has answered. Absent it the card keeps the warning line and stops, which
+            // is the same graceful degradation the familiarity supplier gets.
+            var row = AlmanacIlluminatedModSystem.Instance?.ForageRowFor(e.ProduceCode);
+            if (row != null)
+            {
+                string habitat = HabitatLine(row, AlmanacIlluminatedModSystem.Instance!.AtlasMedianRain, e);
+                if (habitat.Length > 0)
+                    comps.Add(new RichTextComponent(capi, habitat + "\n", f.Muted));
+
+                // Takes the sowing accent, because it is the same promise in the same colour
+                // as a crop's planting line: this is what your own ground will do.
+                comps.Add(new RichTextComponent(capi, GroundLine(capi, row, homebase) + "\n", f.Sow));
+            }
         }
         else if (st == null || st.Tier == CropTier.Versed)
         {
@@ -520,6 +535,110 @@ public static class CropsRenderer
         string? second = FrostClause(e) ?? PaceClause(capi, e);
         if (second == null) return hunger;
         return hunger + " " + second;
+    }
+
+    /// <summary>
+    /// Where a species grows: its temperature band, what it grows on or under, and the ground
+    /// it wants. This is the line the whole atlas exists for.
+    ///
+    /// "Under conifers" is the most useful thing a forage page can say, because it is durably
+    /// true and tells a reader which direction to walk. It does not depend on what worldgen
+    /// did in this particular world, which is exactly the weakness of the ground line below.
+    ///
+    /// The wetness clause prints against the atlas's OWN median rather than a fixed number.
+    /// Every one of vanilla's 45 species sits at minRain 0.4 with no ceiling, so a constant
+    /// threshold would stamp the same clause on more than half the roster and say nothing.
+    /// Against the median, a species only speaks up where it actually differs from its peers.
+    /// </summary>
+    private static string HabitatLine(ForageAtlasRow row, float medianRain, CropEntry e)
+    {
+        var parts = new List<string>();
+
+        if (row.MinTemp > -90 || row.MaxTemp < 90)
+            parts.Add($"{row.MinTemp:0}° to {row.MaxTemp:0}°");
+
+        string tree = row.TreeType.ToLowerInvariant() switch
+        {
+            "decidious" => "broadleaf",     // vanilla's own spelling of the field value
+            "conifer" => "conifer",
+            "tropical" => "tropical",
+            _ => "",
+        };
+        string where = row.Placement.ToLowerInvariant() switch
+        {
+            "ontrees" => tree.Length > 0 ? $"on {tree} trunks" : "on trunks",
+            "undertrees" => tree.Length > 0 ? $"under {tree}" : "under trees",
+            _ => row.MaxForest >= 0 ? "in the open" : "",
+        };
+        if (where.Length > 0) parts.Add(where);
+
+        if (row.MaxRain >= 0) parts.Add("needs dry ground");
+        else if (row.MinRain >= medianRain + 0.1f) parts.Add("wants wet ground");
+        else if (row.MinRain <= medianRain - 0.15f) parts.Add("takes dry ground");
+        else if (row.MaxForest >= 0 && where != "in the open") parts.Add("not in deep wood");
+
+        if (e.StandsWinter) parts.Add("stands the winter");
+
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// Whether the reader's own ground suits the species, and in which months.
+    ///
+    /// Worded as CAPABILITY, never as a promise. A blockpatch envelope says where worldgen was
+    /// willing to place a species, not where one stands today: a patch can be absent for want
+    /// of a host tree or of fertility beneath it, and any world that has been played in has had
+    /// forest felled and ground rebuilt since. So this says the ground suits it. Saying "found
+    /// near you" over ground that holds none is how a field guide loses a reader's trust, and
+    /// promising a specific patch is the Forager's Memory's job, which it can do honestly
+    /// because it watched them pick one.
+    ///
+    /// Rainfall and forest cover are worldgen values rather than seasonal ones, so they are a
+    /// single pass-or-fail and are checked first; only temperature varies month to month.
+    /// </summary>
+    private static string GroundLine(ICoreClientAPI capi, ForageAtlasRow row, BlockPos? homebase)
+    {
+        if (homebase == null) return "Set a homebase to see where it grows";
+
+        var core = AlmanacIlluminatedModSystem.Instance;
+        float rain = core?.HomeRain ?? -1f;
+        float forest = core?.HomeForest ?? -1f;
+
+        if (rain >= 0)
+        {
+            if (rain < row.MinRain) return "Too dry at your base";
+            if (row.MaxRain >= 0 && rain > row.MaxRain) return "Too wet at your base";
+        }
+        if (forest >= 0 && row.MaxForest >= 0 && forest > row.MaxForest)
+            return "Your ground is too wooded";
+
+        // Same twelve-month sample the planting window takes, against the species' own band.
+        var pos = homebase.Copy();
+        int surfaceY = capi.World.BlockAccessor.GetTerrainMapheightAt(pos);
+        if (surfaceY > 0) pos.Y = surfaceY;
+        double dpm = capi.World.Calendar.DaysPerMonth;
+
+        var ok = new bool[12];
+        bool anyWarmer = false, anyCooler = false;
+        for (int m = 0; m < 12; m++)
+        {
+            var cc = capi.World.BlockAccessor.GetClimateAt(
+                pos, EnumGetClimateMode.ForSuppliedDate_TemperatureOnly, (m + 0.5) * dpm);
+            float t = cc?.Temperature ?? float.NaN;
+            if (float.IsNaN(t)) continue;
+            ok[m] = t >= row.MinTemp && t <= row.MaxTemp;
+            if (t > row.MaxTemp) anyWarmer = true;
+            if (t < row.MinTemp) anyCooler = true;
+        }
+
+        string? months = PlantingWindow.RangeString(ok);
+        if (months != null)
+            return months == "Year-round" ? "Your ground suits it, year-round" : $"Your ground suits it, {months}";
+
+        // Never in band. Name the direction it misses by, which is the actionable half.
+        if (anyCooler && !anyWarmer) return "Too cold at your base";
+        if (anyWarmer && !anyCooler) return "Too warm at your base";
+        return "Your base does not suit it";
     }
 
     /// <summary>
