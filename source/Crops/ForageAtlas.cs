@@ -43,11 +43,31 @@ public class ForageAtlasRow
     [ProtoMember(9)] public string Origin = "";
 }
 
+/// <summary>
+/// One species' dye yield: the colour a sealed barrel gives back for it.
+///
+/// Carried separately from the habitat rows rather than as a field on one, because the two
+/// facts come from different asset categories and neither implies the other. A species can
+/// dye without appearing in any blockpatch, and a mod could add a dye for something the
+/// generator never places at all.
+/// </summary>
+[ProtoContract]
+public class ForageDye
+{
+    [ProtoMember(1)] public string Key = "";
+    [ProtoMember(2)] public string Colour = "";
+}
+
 /// <summary>Server's reply: every mushroom row, plus the reader's own ground.</summary>
 [ProtoContract]
 public class ForageAtlasResponse
 {
     [ProtoMember(1)] public List<ForageAtlasRow> Rows = new();
+
+    /// <summary>Species that yield a dye. Empty in a pack that adds none, which is every pack
+    /// without a mushroom mod: the base game has six dye barrels and not one of them takes a
+    /// mushroom.</summary>
+    [ProtoMember(2)] public List<ForageDye> Dyes = new();
 
     /// <summary>The atlas's own median rainfall floor, computed server-side over the rows it
     /// actually built. The wetness clause is printed relative to this rather than to a
@@ -111,9 +131,7 @@ public static class ForageAtlas
             List<Vintagestory.API.Datastructures.JsonObject>? entries = null;
             try
             {
-                var token = asset.ToObject<Newtonsoft.Json.Linq.JArray>();
-                entries = new List<Vintagestory.API.Datastructures.JsonObject>();
-                foreach (var t in token) entries.Add(new Vintagestory.API.Datastructures.JsonObject(t));
+                entries = Entries(asset);
             }
             catch (Exception e)
             {
@@ -147,6 +165,128 @@ public static class ForageAtlas
             }
         }
         return rows;
+    }
+
+    /// <summary>
+    /// Walk every barrel recipe and keep the ones a mushroom dyes for.
+    ///
+    /// Same posture as the habitat walk: nothing is copied in and no mod is named. The base
+    /// game dyes from flowers and berries and never from a mushroom, so every row this returns
+    /// came from whatever mushroom mod the reader happens to run, and one added tomorrow is
+    /// picked up with no change here.
+    ///
+    /// `recipes` is a server-only asset category (AssetCategory.recipes is EnumAppSide.Server),
+    /// which is the whole reason this rides a packet rather than being read on the client.
+    /// </summary>
+    public static List<ForageDye> BuildDyes(ICoreServerAPI sapi)
+    {
+        var dyes = new List<ForageDye>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var asset in sapi.Assets.GetManyInCategory("recipes", "barrel/"))
+        {
+            List<Vintagestory.API.Datastructures.JsonObject>? entries = null;
+            try
+            {
+                entries = Entries(asset);
+            }
+            catch (Exception e)
+            {
+                IlluminatedLogger.Warn(sapi, "crops", $"forage dyes: {asset.Location} unreadable ({e.Message}); skipped");
+                continue;
+            }
+
+            foreach (var recipe in entries)
+            {
+                string colour = DyeColour(recipe["output"]["code"].AsString(""));
+                if (colour.Length == 0) continue;
+
+                var ingredients = recipe["ingredients"].AsArray();
+                if (ingredients == null) continue;
+
+                foreach (var ing in ingredients)
+                {
+                    if (ing == null) continue;
+                    foreach (var block in IngredientBlocks(sapi, ing))
+                    {
+                        if (block is not BlockMushroom) continue;
+                        string key = Key(block.Code?.ToString());
+                        // First colour wins. A species that appears in two dye recipes is
+                        // reported once rather than contradicting itself on the page.
+                        if (key.Length == 0 || !seen.Add(key)) continue;
+                        dyes.Add(new ForageDye { Key = key, Colour = colour });
+                    }
+                }
+            }
+        }
+        return dyes;
+    }
+
+    /// <summary>A file's entries, whether it holds an array of them or a single one. Both
+    /// shapes occur in the base game's own assets.</summary>
+    private static List<Vintagestory.API.Datastructures.JsonObject> Entries(IAsset asset)
+    {
+        var list = new List<Vintagestory.API.Datastructures.JsonObject>();
+        var token = asset.ToObject<Newtonsoft.Json.Linq.JToken>();
+        if (token is Newtonsoft.Json.Linq.JArray arr)
+        {
+            foreach (var t in arr) list.Add(new Vintagestory.API.Datastructures.JsonObject(t));
+        }
+        else if (token != null)
+        {
+            list.Add(new Vintagestory.API.Datastructures.JsonObject(token));
+        }
+        return list;
+    }
+
+    /// <summary>The colour word out of a dye output code, or empty when the recipe makes
+    /// something else. Anything still holding a wildcard or a substitution placeholder is
+    /// dropped, because it is not a word the page could print.</summary>
+    private static string DyeColour(string? outputCode)
+    {
+        if (string.IsNullOrEmpty(outputCode)) return "";
+        string s = outputCode!;
+        int colon = s.IndexOf(':');
+        if (colon >= 0) s = s.Substring(colon + 1);
+        if (!s.StartsWith("dye-", StringComparison.OrdinalIgnoreCase)) return "";
+        string colour = s.Substring(4);
+        return colour.IndexOf('{') >= 0 || colour.IndexOf('*') >= 0 ? "" : colour;
+    }
+
+    /// <summary>Every block one ingredient line can stand for. Concrete codes resolve directly;
+    /// a wildcard is expanded through the block registry and narrowed by allowedVariants when
+    /// the recipe supplies one. No mushroom dye in the pack today uses a wildcard, but a
+    /// recipe walker that ignored them would fail quietly rather than loudly.</summary>
+    private static IEnumerable<Block> IngredientBlocks(ICoreServerAPI sapi, Vintagestory.API.Datastructures.JsonObject ing)
+    {
+        string code = ing["code"].AsString("") ?? "";
+        if (code.Length == 0) yield break;
+        var loc = new AssetLocation(code);
+
+        if (code.IndexOf('*') < 0)
+        {
+            var one = sapi.World.GetBlock(loc);
+            if (one != null) yield return one;
+            yield break;
+        }
+
+        var allowed = ing["allowedVariants"].AsArray<string>();
+        foreach (var b in sapi.World.SearchBlocks(loc))
+        {
+            if (b == null) continue;
+            if (allowed == null || allowed.Length == 0) { yield return b; continue; }
+            string s = b.Code?.ToString() ?? "";
+            foreach (var v in allowed)
+            {
+                if (string.IsNullOrEmpty(v)) continue;
+                if (s.EndsWith("-" + v, StringComparison.OrdinalIgnoreCase)
+                    || s.IndexOf("-" + v + "-", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    yield return b;
+                    break;
+                }
+            }
+        }
     }
 
     /// <summary>The mod that supplied this asset, by its display name. `asset.Origin` names

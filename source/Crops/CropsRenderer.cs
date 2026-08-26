@@ -220,8 +220,19 @@ public static class CropsRenderer
     /// </summary>
     private static string GroupNote(CropKind k) => k switch
     {
+        // The two rules below are the only facts that hold across every species in the group,
+        // which is exactly why they belong here and not on eighty-one cards. Both are read out
+        // of the base game's mycelium (BEMycelium.onServerTick and growMushrooms), so they stay
+        // true whatever mushroom mod supplies the species.
+        //
+        // The fertility figure deserves its plain-English reading rather than the number: the
+        // threshold is ten, and vanilla soil runs from 100 at its poorest to 300 at its richest,
+        // with forest floor at 120 and peat at 50. Ten excludes stone, sand, gravel, packed dirt
+        // and clay, and nothing else. Printing "needs fertile ground" would have been false.
         CropKind.Mushroom =>
-            "None of what follows is planted. It is only found, and what is found is never learned by sowing.\n",
+            "None of what follows is planted. It is only found, and what is found is never learned by sowing.\n"
+            + "Fungus keeps a slow clock, and it turns only on days above five degrees. A cold season does not kill what lies under the ground; it stops the counting until warmth returns.\n"
+            + "Nothing comes up on stone, gravel, sand, clay or a beaten path. Any true soil will serve, and a rich one is worth no more than a poor one.\n",
         CropKind.BerryBush =>
             "A bush is known by raising one. Cuttings taken off a bush you set yourself are what fill these pages.\n",
         CropKind.FruitTree =>
@@ -361,6 +372,12 @@ public static class CropsRenderer
                 // as a crop's planting line: this is what your own ground will do.
                 comps.Add(new RichTextComponent(capi, GroundLine(capi, row, homebase) + "\n", f.Sow));
             }
+
+            // Outside the row guard on purpose. A dye comes from a barrel recipe, not from
+            // worldgen, so a species could yield one without the generator ever placing it.
+            string? dye = AlmanacIlluminatedModSystem.Instance?.DyeColourFor(e.ProduceCode);
+            if (dye != null)
+                comps.Add(new RichTextComponent(capi, DyeLine(dye) + "\n", f.Muted));
         }
         else if (st == null || st.Tier == CropTier.Versed)
         {
@@ -659,6 +676,17 @@ public static class CropsRenderer
     /// gone. Both halves of the test are required, so tolerating deep cold alone does not
     /// claim permanence.
     /// </summary>
+    /// <summary>
+    /// What a barrel will make of it, for the species that make anything.
+    ///
+    /// The colour word arrives from the server exactly as the recipe's own output code spells
+    /// it, so a mod that adds a mushroom dye in a colour nobody has thought of yet reads
+    /// correctly with no change here. Phrased without an article so "orange" and "blue" both
+    /// scan, which is cheaper than teaching the page English.
+    /// </summary>
+    private static string DyeLine(string colour) =>
+        $"Steeped in a sealed barrel, it gives up {colour} dye.";
+
     private static string WarningLine(CropEntry e)
     {
         var parts = new List<string>();

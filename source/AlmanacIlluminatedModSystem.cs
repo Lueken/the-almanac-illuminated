@@ -43,6 +43,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
     // gives it, which is the same graceful-degradation posture the familiarity supplier
     // takes when no supplier is registered.
     private Dictionary<string, ForageAtlasRow>? forageAtlas;
+    private Dictionary<string, string>? forageDyes;
     private float homeRain = -1f, homeForest = -1f, atlasMedianRain = 0.4f;
     private bool forageAtlasRequested;
 
@@ -51,6 +52,14 @@ public class AlmanacIlluminatedModSystem : ModSystem
     {
         if (forageAtlas == null) return null;
         return forageAtlas.TryGetValue(ForageAtlas.Key(produceCode), out var row) ? row : null;
+    }
+
+    /// <summary>Dye colour for a species key, or null when no atlas has arrived or the species
+    /// yields none. Most yield none, so absence is the ordinary case and never an error.</summary>
+    public string? DyeColourFor(string produceCode)
+    {
+        if (forageDyes == null) return null;
+        return forageDyes.TryGetValue(ForageAtlas.Key(produceCode), out var colour) ? colour : null;
     }
 
     public float HomeRain => homeRain;
@@ -268,10 +277,12 @@ public class AlmanacIlluminatedModSystem : ModSystem
         try
         {
             var rows = ForageAtlas.Build(sapi);
-            var reply = new ForageAtlasResponse { Rows = rows, MedianRain = ForageAtlas.MedianRain(rows) };
+            var dyes = ForageAtlas.BuildDyes(sapi);
+            var reply = new ForageAtlasResponse { Rows = rows, Dyes = dyes, MedianRain = ForageAtlas.MedianRain(rows) };
             serverChannel?.SendPacket(reply, fromPlayer);
             IlluminatedLogger.Info(sapi, "crops",
-                $"forage atlas sent to {fromPlayer.PlayerName}: {rows.Count} mushroom row(s), median minRain {reply.MedianRain:0.##}");
+                $"forage atlas sent to {fromPlayer.PlayerName}: {rows.Count} mushroom row(s), "
+                + $"{dyes.Count} dye species, median minRain {reply.MedianRain:0.##}");
         }
         catch (Exception e)
         {
@@ -309,9 +320,14 @@ public class AlmanacIlluminatedModSystem : ModSystem
         forageAtlas = map;
         atlasMedianRain = msg.MedianRain;
 
+        var dyeMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dye in msg.Dyes) dyeMap[dye.Key] = dye.Colour;
+        forageDyes = dyeMap;
+
         if (capi != null)
             IlluminatedLogger.Info(capi, "crops",
-                $"forage atlas received: {map.Count} mushroom row(s), median minRain {atlasMedianRain:0.##}");
+                $"forage atlas received: {map.Count} mushroom row(s), {dyeMap.Count} dye species, "
+                + $"median minRain {atlasMedianRain:0.##}");
 
         // Cards already drawn were built without habitat lines. Redraw so the reader is not
         // left with a thinner page than the data now supports.
