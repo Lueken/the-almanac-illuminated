@@ -437,7 +437,11 @@ public static class CropCatalog
 
         foreach (var block in live.Concat(legacy))
         {
-            var produce = ResolveProduce(capi, block);
+            // Harvest first, Drops second. A live fruiting bush keeps its berry nowhere near
+            // its Drops; the legacy blocktype does. Live blocks come first in the sequence, so
+            // where both exist for a species the live one claims the produce code and the
+            // legacy copy falls out on the dedupe, which is the intended direction.
+            var produce = ResolveBushHarvest(capi, block) ?? ResolveProduce(capi, block);
             if (produce?.Collectible?.Code == null) continue;
             if (!seen.Add(produce.Collectible.Code.ToString())) continue;
 
@@ -470,6 +474,35 @@ public static class CropCatalog
         // as one card named "Plant debris" and nobody noticed until it was on the page.
         IlluminatedLogger.Info(capi, "crops", $"Berry bushes: {entries.Count} card(s) after produce dedupe");
         return entries;
+    }
+
+    /// <summary>
+    /// A live fruiting bush's berry, which is nowhere near its Drops.
+    ///
+    /// The base game puts it in `block.Attributes["harvestedStacks"]` and resolves it there
+    /// (BlockBehaviorFruitingBush.cs:96-97), because Drops is what BREAKING the bush gives you
+    /// and the game makes that plant debris deliberately: "Wild fruiting bushes cannot be moved
+    /// - if you break them they will just drop plant debris." So for the ten live blocks there
+    /// is no berry in Drops to find, and reading them the way the legacy blocktype is read gave
+    /// ten bushes that all resolved to litter and collapsed onto one card.
+    ///
+    /// Taken off the behaviour rather than re-parsed out of the attribute, so the ByType pick
+    /// and the {type} substitution stay the game's own and cannot drift from it. Absent on the
+    /// legacy blocktype, which does keep its berry in Drops, so null here means "ask Drops".
+    /// </summary>
+    private static ItemStack? ResolveBushHarvest(ICoreClientAPI capi, Block block)
+    {
+        var beh = block.GetBehavior<Vintagestory.GameContent.BlockBehaviorFruitingBush>();
+        if (beh?.harvestedStacks == null) return null;
+
+        foreach (var hs in beh.harvestedStacks)
+        {
+            var stack = hs?.ResolvedItemstack;
+            string? path = stack?.Collectible?.Code?.Path;
+            if (stack == null || path == null || IsNotProduce(path)) continue;
+            return Canonicalise(capi, stack);
+        }
+        return null;
     }
 
     /// <summary>Null rather than NaN when the key is absent, so the caller can fall through
