@@ -20,10 +20,15 @@ two go up together.
   Both now carry a standing like any crop, and each group says its own rule once at the top
   rather than eighty times over. A tree is known by planting it, a bush by raising one.
 
-- The hedge lists the bushes the game actually has. The catalogue was reading a legacy block
-  shape that five species no longer use, so five berry bushes were missing outright and the
-  rest were being read through the wrong growth keys. It now reads live fruiting bushes and
-  falls back to the older shape only where a pack still uses it.
+- The hedge lists the bushes the game actually has, and names them correctly. The catalogue
+  was reading a legacy block shape that five species no longer use, so beautyberry,
+  cloudberry, blackberry, raspberry and strawberry were missing outright and the rest were
+  read through the wrong growth keys. Worse, a bush keeps its berry nowhere near the drops a
+  broken one leaves, so the ones that were found were named after the litter: a card reading
+  "Plant debris" stood in the hedge where a berry should have been, and because the catalogue
+  files one card per produce, every bush that landed on it disappeared into that one entry.
+  All ten now read from what a bush gives when you pick it, which is where the fruit was the
+  whole time.
 
 - Every fruit tree roster is read, not the first one found. With more than one orchard mod
   installed the catalogue took whichever roster the registry happened to hand back first and
