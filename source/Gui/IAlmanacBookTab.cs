@@ -28,6 +28,12 @@ public interface IAlmanacBookTab
     /// top-level view rather than reopen wherever it last was. Default: ignore.</summary>
     void OnActivated() { }
 
+    /// <summary>Hang this tab from the FOOT group, beside the reader's own tools
+    /// (Journal, Crops, Weather, Index), rather than in the content band up top.
+    /// For tabs that are about the book itself rather than about what is in it.
+    /// Default: false, the content band.</summary>
+    bool FootGroup => false;
+
     /// <summary>Spread layout: 2 = one column per page (chapter-like),
     /// 4 = two narrow columns per page (Crops-like). Other values read as 4.</summary>
     int ColumnsPerSpread { get; }

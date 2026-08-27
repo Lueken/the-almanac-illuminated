@@ -92,6 +92,10 @@ public class AlmanacIlluminatedModSystem : ModSystem
     // retired in 0.2.0, so a machine that cannot run the capture cannot open the
     // book, and says so plainly rather than failing quietly.
     private PhysicalBookView? physicalView;
+
+    /// <summary>The binding the reader chose (a CoverLibrary key). Theirs alone: no guide
+    /// pack may set it, so two people reading the same book can bind it differently.</summary>
+    private string coverKey = CoverLibrary.DefaultKey;
     /// <summary>Pause the singleplayer world while the book is open. Default on; the book
     /// exists to be read, and reading should not cost daylight.</summary>
     private bool pauseOnOpen = true;
@@ -477,6 +481,8 @@ public class AlmanacIlluminatedModSystem : ModSystem
         // chained callback until the cache is warm. Opening the book early just stops
         // the chain and takes the remaining cost the old way.
         api.Event.LevelFinalize += () => api.Event.RegisterCallback(_ => WarmPaginateStep(api), 1500);
+        physicalView.SetCover(CoverLibrary.TextureOf(coverKey));
+        RegisterBookTab(new BindingTab(() => coverKey, SetCover));
         physicalView.OnCaptureUnavailable = OnCaptureUnavailable;
         api.Event.RegisterRenderer(physicalView, EnumRenderStage.Ortho, "almanacilluminated-bookview");
 
@@ -682,6 +688,20 @@ public class AlmanacIlluminatedModSystem : ModSystem
         bookDialog.TryOpen();
     }
 
+    /// <summary>Bind the book in a new material: remember it, re-skin the boards, and
+    /// keep it. Called from the Binding tab on a click, so it must be cheap and must not
+    /// disturb the open book beyond the cover itself — only the three meshes carrying the
+    /// cover are rebuilt, and the reader stays on the page they were reading.</summary>
+    private void SetCover(string key)
+    {
+        CoverLibrary.Cover cover = CoverLibrary.Resolve(key);
+        if (cover.Key == coverKey) return;
+        coverKey = cover.Key;
+        physicalView?.SetCover(CoverLibrary.TextureOf(coverKey));
+        SaveSettings();
+        IlluminatedLogger.Info(capi!, "book", $"Bound in {cover.Display} ({cover.Texture}).");
+    }
+
     /// <summary>What the player is told when the book cannot be drawn at all.</summary>
     private const string CaptureLostLine =
         "The Almanac cannot be drawn on this machine — its page needs an offscreen "
@@ -730,6 +750,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
             if (cfg != null)
             {
                 pauseOnOpen = cfg.PauseOnOpen; loadedKnobs = cfg;
+                coverKey = CoverLibrary.Resolve(cfg.Cover).Key;
                 respectWorldLight = cfg.RespectLight ?? true;
                 illuminationFloor = IlluminationCurve.ClampFloor(cfg.LightFloor ?? IlluminationCurve.DefaultFloor);
                 if (System.Enum.TryParse<GrowthMarksStyle>(cfg.CropMarks, true, out var st)) CropMarks = st;
@@ -749,6 +770,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
             var cfg = new BookSettings
             {
                 PauseOnOpen = pauseOnOpen,
+                Cover = coverKey,
                 RespectLight = respectWorldLight,
                 LightFloor = illuminationFloor,
                 CropMarks = CropMarks.ToString(),
@@ -813,6 +835,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
         /// <summary>Singleplayer reading pause (on by default; `.almbook pause off` to
         /// keep the days moving). Saved but inert in multiplayer.</summary>
         public bool PauseOnOpen = true;
+
+        /// <summary>The reader's binding (a CoverLibrary key). Absent = the shipped boards.</summary>
+        public string? Cover;
 
         /// <summary>Shade the book by the light reaching the reader (`.almbook light`).
         /// Nullable like the knobs below: absent = the shipped default (on).</summary>
