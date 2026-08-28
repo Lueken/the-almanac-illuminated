@@ -13,6 +13,29 @@ The Crops chapter, which was the one part of the book still showing a reader les
 game already knew. Ships alongside TCM 0.5.0; TCM gates on `MinIlluminatedVersion`, so the
 two go up together.
 
+### The book itself
+
+- **The page is the game's own parchment now.** The paper tone used to be a colour picked by
+  hand over generated noise, sampled from cover art that no longer ships. It now reads its
+  tones out of the game's own page texture at load, finding the writing surface by brightness
+  so the ruled lines and the dark edge band drop out on their own. A retexture pack carries
+  through without anything here changing. The tones are still dealt out rather than tiled,
+  because a repeat across a spread is worse than no texture at all, and the old generated
+  palette stays as the fallback if the texture cannot be read.
+
+- **The page holds its ground in half light.** A page read at dusk used to lose about half its
+  tone, and half light is where most reading actually happens. Only the middle of the curve
+  moved. Full dark still costs you the page and a lamp still changes the reading.
+
+- **You choose the binding, and it is yours alone.** Covers are the reader's choice and never
+  the pack's, so two people reading the same book can bind it differently. Leather in eleven
+  colours, dyed cloth in eleven, and wool, each drawn as the real item the way the handbook
+  draws it, and each taking the texture the item itself declares, so a cover and the hide it
+  was cut from can never drift apart. Nothing new ships with the mod; the materials are read
+  from the game at runtime, the same as the parchment. Swapping re-skins only the parts that
+  wear the cover, so the pages are untouched and you stay on the page you were reading. The
+  tab hangs below Journal, Crops, Weather and Index rather than among them.
+
 ### The perennials
 
 - Fruit trees and berry bushes have pages that can fill. They were listed and then bypassed:
