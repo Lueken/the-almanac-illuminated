@@ -299,6 +299,7 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     {
         public string Label = "";
         public int Order;
+        public bool Foot;
         public Action Activate = () => { };
         public Func<bool> IsActive = () => false;
     }
@@ -313,6 +314,7 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
             {
                 Label = tab.Label,
                 Order = tab.Order,
+                Foot = tab.FootGroup,
                 Activate = () => OnExternalTab(tab),
                 IsActive = () => externalTab == tab,
             });
@@ -1401,8 +1403,12 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         }
 
         // The mod-tab band: computed tabs and ribbon-tab chapters, one ordering.
-        foreach (ModTabEntry mt in BuildModTabs())
+        // Foot-group tabs are held back and hung under the tools instead.
+        var modTabs = BuildModTabs();
+        var footTabs = new List<ModTabEntry>();
+        foreach (ModTabEntry mt in modTabs)
         {
+            if (mt.Foot) { footTabs.Add(mt); continue; }
             if (mt.IsActive()) leftHit = lLabels.Count;
             lLabels.Add(mt.Label);
             leftActions.Add(mt.Activate);
@@ -1424,8 +1430,17 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         lLabels.AddRange(toolLabels);
         leftActions.AddRange(toolActions);
 
+        // The book's own settings hang below the tools: last of the foot group,
+        // because they are about the book rather than about anything in it.
+        foreach (ModTabEntry mt in footTabs)
+        {
+            if (mt.IsActive()) leftHit = lLabels.Count;
+            lLabels.Add(mt.Label);
+            leftActions.Add(mt.Activate);
+        }
+
         leftLabels = lLabels.ToArray();
-        leftBottom = toolLabels.Length;
+        leftBottom = toolLabels.Length + footTabs.Count;
         leftActive = leftHit;
 
         // The pinned band heads the right strip as named tabs, always visible
@@ -1470,18 +1485,147 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     private void DrawFrame(Context ctx, ImageSurface surface, ElementBounds b)
         => DrawPhysicalPages(ctx, b);
 
+    // The parchment palette, measured against the game's own (2026-08-26). The page
+    // used to be #ECE2C6 with a 4-shade noise of ~4 luminance stdev, sampled from the
+    // flat book's third-party frame art. Vanilla's page face — item/lore/opened-normal
+    // with its baked ink dropped — sits at R .813 G .761 B .596 with a stdev near 15:
+    // markedly more golden, and about four times as mottled.
+    //
+    // Vanilla's tone is that of an aged in-world prop and this page carries small
+    // text, so its brightness is kept for legibility and only vanilla's channel RATIOS
+    // are adopted (G/R .936, B/R .733). That lands on #E9DBAB, a hair off the vanilla
+    // page stack's own #EADDB1 — the same parchment, freshly kept.
+    //
+    // The noise stays under vanilla's stdev on purpose: at 64x40 across the whole
+    // spread a texel here is ~14 screen px against vanilla's ~1, and matching the
+    // figure exactly reads as blotching rather than grain.
+    private const double ParchR = 0.915, ParchG = 0.857, ParchB = 0.671;
+    private const int NoiseShades = 6;
+    private const double NoiseStep = 0.021;
+
     /// <summary>
-    /// The physical-mode page background, in the game's own pixel language:
-    /// a coarse quantized-noise parchment blitted with nearest-neighbor
-    /// scaling (chunky texels, like the model's leather), a center-fold
-    /// shadow built from hard-edged stepped bands, a crease, and stepped
-    /// edge shading. No smooth gradients — smooth reads as "drawn", and the
-    /// book should read as textured. Composed once per spread.
+    /// How much of the grain survives. FuegoFish's suggestion (2026-08-26): lay the
+    /// parchment down at partial opacity over its own average, which softens the colour
+    /// variation and lets the text sit on a steadier ground without flattening the page
+    /// to a solid fill. Applied here by pulling every tone toward the palette mean
+    /// rather than by drawing twice — same result, one pass.
+    /// </summary>
+    private const double GrainStrength = 0.40;
+
+    /// <summary>The noise ramp is centred on the base tone, so the base IS the page
+    /// colour rather than its brightest step.</summary>
+    private const double NoiseCentre = NoiseStep * (NoiseShades - 1) / 2.0;
+
+    /// <summary>
+    /// Vanilla's own parchment tones, read from the game's page texture at runtime and
+    /// cached for the session. The asset is never copied into this mod — it is read
+    /// from the game's own domain, so the book wears the game's parchment without
+    /// redistributing a byte of it.
+    ///
+    /// Only the COLOURS are taken, not the image: the texels are dealt out by the same
+    /// hash the procedural parchment uses, so there is no tile to repeat. Tiling the
+    /// crop directly would also work (measured: its wrap seam is smaller than the
+    /// variation between any two interior columns, because structureless noise wraps by
+    /// definition) but 24 texels at this page's scale repeat under three times across a
+    /// spread, and a repeat the eye can find is worse than no texture at all.
+    /// </summary>
+    private static int[]? vanillaParchment;
+    private static bool vanillaParchmentTried;
+    private static readonly AssetLocation VanillaPagesAsset = new("game", "textures/item/lore/pages.png");
+
+    /// <summary>
+    /// The game's parchment tones, loaded once. Returns null if the texture cannot be
+    /// read, and the tuned procedural palette carries the page instead — a page that
+    /// fails to a slightly different cream is a far better outcome than one that fails
+    /// to no page at all.
+    ///
+    /// The clean field is found by luminance rather than by hardcoded bounds: the page
+    /// texture carries two dark rules down its left and a dark band down its right,
+    /// and everything a good margin below the median is dropped. That keeps the 46
+    /// parchment tones and survives a vanilla retexture that moves them.
+    /// </summary>
+    private int[]? VanillaParchment()
+    {
+        if (vanillaParchmentTried) return vanillaParchment;
+        vanillaParchmentTried = true;
+        try
+        {
+            IAsset? asset = capi.Assets.TryGet(VanillaPagesAsset);
+            if (asset == null)
+            {
+                IlluminatedLogger.Warn(capi, "book",
+                    $"{VanillaPagesAsset} not found; using the mod's own parchment palette.");
+                return null;
+            }
+
+            var bmp = asset.ToBitmap(capi);
+            int w = bmp.Width, h = bmp.Height;
+            var lums = new List<double>(w * h);
+            var raw = new List<(int R, int G, int B)>(w * h);
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    var c = bmp.GetPixel(x, y);
+                    if (c.Alpha < 128) continue;
+                    raw.Add((c.Red, c.Green, c.Blue));
+                    lums.Add(0.299 * c.Red + 0.587 * c.Green + 0.114 * c.Blue);
+                }
+            }
+            if (raw.Count < 64) return null;
+
+            var sorted = new List<double>(lums);
+            sorted.Sort();
+            double median = sorted[sorted.Count / 2];
+            var field = new List<(int R, int G, int B)>(raw.Count);
+            for (int i = 0; i < raw.Count; i++)
+            {
+                if (lums[i] < median - 25) continue;   // the rules and the edge band
+                field.Add(raw[i]);
+            }
+            if (field.Count < 64) return null;
+
+            // Soften toward the field's own mean (see GrainStrength). Baked in once
+            // here, so the per-texel path stays a single array read.
+            double mr = field.Average(p => (double)p.R);
+            double mg = field.Average(p => (double)p.G);
+            double mb = field.Average(p => (double)p.B);
+            var keep = new List<int>(field.Count);
+            foreach (var (r, g, bl) in field)
+            {
+                int sr = (int)Math.Round(mr + (r - mr) * GrainStrength);
+                int sg = (int)Math.Round(mg + (g - mg) * GrainStrength);
+                int sb = (int)Math.Round(mb + (bl - mb) * GrainStrength);
+                keep.Add((Math.Clamp(sr, 0, 255) << 16) | (Math.Clamp(sg, 0, 255) << 8) | Math.Clamp(sb, 0, 255));
+            }
+
+            vanillaParchment = keep.ToArray();
+            IlluminatedLogger.Info(capi, "book",
+                $"Parchment read from {VanillaPagesAsset}: {keep.Count} texels kept of {raw.Count}, "
+                + $"{keep.Distinct().Count()} distinct tones at {GrainStrength:P0} grain.");
+            return vanillaParchment;
+        }
+        catch (Exception e)
+        {
+            IlluminatedLogger.Warn(capi, "book",
+                $"Could not read the game's parchment ({e.Message}); using the mod's own palette.");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The page background, in the game's own pixel language: a coarse
+    /// quantized-noise parchment blitted with nearest-neighbor scaling (chunky
+    /// texels, like the model's leather), a center-fold shadow built from
+    /// hard-edged stepped bands, a crease, and stepped edge shading. No smooth
+    /// gradients — smooth reads as "drawn", and the book should read as
+    /// textured. Composed once per spread.
     /// </summary>
     private void DrawPhysicalPages(Context ctx, ElementBounds b)
     {
         double dx = b.drawX, dy = b.drawY, dw = b.InnerWidth, dh = b.InnerHeight;
         double cx = dx + dw / 2;
+        int[]? pal = VanillaParchment();
 
         // Parchment texels: ~2 noise pixels per model voxel (the spread is
         // 30x16 voxels), scaled up with Filter.Nearest for hard pixel edges.
@@ -1498,8 +1642,20 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
                     {
                         uint h = (uint)(px * 73856093 ^ py * 19349663) * 0x85EBCA6Bu;
                         h ^= h >> 16;
-                        double v = 0.013 * (h % 4);   // 4 discrete shades, VS-palette style
-                        nctx.SetSourceRGB(0.928 - v - warm * 0.5, 0.888 - v - warm, 0.778 - v - warm * 1.7);
+                        double r, g, bl;
+                        if (pal != null)
+                        {
+                            int c = pal[h % (uint)pal.Length];
+                            r = ((c >> 16) & 0xFF) / 255.0;
+                            g = ((c >> 8) & 0xFF) / 255.0;
+                            bl = (c & 0xFF) / 255.0;
+                        }
+                        else
+                        {
+                            double v = (NoiseStep * (h % NoiseShades) - NoiseCentre) * GrainStrength;
+                            r = ParchR - v; g = ParchG - v; bl = ParchB - v;
+                        }
+                        nctx.SetSourceRGB(r - warm * 0.5, g - warm, bl - warm * 1.7);
                         nctx.Rectangle(px, py, 1, 1);
                         nctx.Fill();
                     }

@@ -102,7 +102,17 @@ public static class CropsRenderer
 
         foreach (var e in entries)
         {
-            if (e.Kind != CropKind.SeedCrop) { perennials.Add(e); continue; }
+            if (e.Kind != CropKind.SeedCrop)
+            {
+                // Perennials are grouped by kind rather than by family, but they still get a
+                // standing if the supplier tracks them. A standing with an empty FamilyId is
+                // the normal case here and must NOT fall through to `untracked` the way it
+                // does for a sown crop: these have no family by design, not by omission.
+                perennials.Add(e);
+                var pst = fam.Of(e);
+                if (pst != null) standing[e] = pst;
+                continue;
+            }
             var st = fam.Of(e);
             if (st == null || string.IsNullOrEmpty(st.FamilyId)) { untracked.Add(e); continue; }
             standing[e] = st;
@@ -147,12 +157,21 @@ public static class CropsRenderer
         {
             if (lastKind == null || e.Kind != lastKind)
             {
+                // The same break a family gets, for the same reason. A group heading with no
+                // rule under it read as one more bold line in a column of running text, which
+                // is the exact complaint the rule was added to answer for families. It matters
+                // more here, not less: a family of crops earns a fresh rule every two or three
+                // cards, while MUSHROOMS carries one heading over eighty-one.
                 pending = Heading(capi, GroupTitle(e.Kind), anyBefore, f);
+                pending.Add(new SownRuleComponent(capi, 12));
+                pending.Add(new ClearFloatTextComponent(capi, 3));
                 pending.Add(new RichTextComponent(capi, GroupNote(e.Kind), f.Voice));
+                pending.Add(new ClearFloatTextComponent(capi, 8));
                 lastKind = e.Kind;
                 anyBefore = true;
             }
-            blocks.Add(Join(pending, BuildCard(capi, e, homebase, f, null, null, marks)));
+            standing.TryGetValue(e, out var pst);
+            blocks.Add(Join(pending, BuildCard(capi, e, homebase, f, pst, null, marks)));
             pending = null;
         }
 
@@ -197,25 +216,35 @@ public static class CropsRenderer
     /// <summary>
     /// Said once under a perennial heading and never on the cards beneath it.
     ///
-    /// Every one of these groups leaves familiarity at <see cref="BuildByFamily"/>'s first
-    /// line, so their cards arrive with no standing and no family and print whatever they
-    /// have outright. Next to a sown crop the reader has never grown, whose page is held
-    /// mostly shut, that looks like the book keeping secrets at random. It is not: nothing
-    /// in these groups is sown, so there is no growing of them to record and nothing to
-    /// hold back. Saying so once per group is what makes the asymmetry read as a rule.
+    /// The bush and tree notes used to explain why their pages stood open, because nothing in
+    /// those groups could be learned. Fruit familiarity made that false, so they now say the
+    /// rule that replaced it: a perennial is learned by PROPAGATING it, not by picking it.
+    /// That one sentence covers both gates. An orchard needs it said because wild trees can be
+    /// picked forever; a bush needs it said because a cutting only counts off one somebody has
+    /// already raised.
     ///
-    /// Not hidden instead of explained, deliberately. Until a fruit tree can earn its page
-    /// there is no way for a reader to win these figures back, and withholding what cannot
-    /// be earned is a loss dressed up as a reward.
+    /// The mushroom note is untouched and still true. Nothing plants a mushroom, so nothing
+    /// about it is learned, and that group's pages do still stand open for the old reason.
     /// </summary>
     private static string GroupNote(CropKind k) => k switch
     {
+        // The two rules below are the only facts that hold across every species in the group,
+        // which is exactly why they belong here and not on eighty-one cards. Both are read out
+        // of the base game's mycelium (BEMycelium.onServerTick and growMushrooms), so they stay
+        // true whatever mushroom mod supplies the species.
+        //
+        // The fertility figure deserves its plain-English reading rather than the number: the
+        // threshold is ten, and vanilla soil runs from 100 at its poorest to 300 at its richest,
+        // with forest floor at 120 and peat at 50. Ten excludes stone, sand, gravel, packed dirt
+        // and clay, and nothing else. Printing "needs fertile ground" would have been false.
         CropKind.Mushroom =>
-            "None of what follows is planted. It is only found, and what is found is never learned by sowing.\n",
+            "None of what follows is planted. It is only found, and what is found is never learned by sowing.\n"
+            + "Fungus keeps a slow clock, and it turns only on days above five degrees. A cold season does not kill what lies under the ground; it stops the counting until warmth returns.\n"
+            + "Nothing comes up on stone, gravel, sand, clay or a beaten path. Any true soil will serve, and a rich one is worth no more than a poor one.\n",
         CropKind.BerryBush =>
-            "Bushes are gathered rather than sown. These pages stand open because there is no growing of them to set down.\n",
+            "A bush is known by raising one. Cuttings taken off a bush you set yourself are what fill these pages.\n",
         CropKind.FruitTree =>
-            "An orchard is grown, but not from seed and not in rows. Tending one raises your standing as a grower; it does not fill a page the way a sown crop does, so these stand open.\n",
+            "An orchard is known by planting it. A tree stays a stranger, however much of it you pick, until you have rooted or grafted a cutting of your own.\n",
         _ => "\n",
     };
 
@@ -301,8 +330,19 @@ public static class CropsRenderer
         //   one line on when to sow it where you live
         // A tier removes lines from the bottom; it never rearranges them. The kind is not
         // labelled, because every card sits under a heading that already names it.
+        // Inline, not a left float, and the difference is the whole legibility of the card.
+        //
+        // A left float reserves a column for its own height and no further. The icon is about
+        // two lines tall, so the name and one line of detail sat indented beside it and every
+        // line after that cleared the float and returned to the column's LEFT margin, further
+        // left than the name it belonged to. On a four-line card that put "wet ground" and
+        // "Sep-Nov" hanging out past the entry above them, and no amount of space between cards
+        // could fix it, because the ragged edge is inside the card.
+        //
+        // Inline puts the icon in the name's own line instead. The line grows to the icon's
+        // height, so nothing is lost vertically, and every line below starts at one left edge.
         if (e.Produce != null)
-            comps.Add(new ItemstackTextComponent(capi, FreshIcon(capi, e.Produce), 40, 6, EnumFloat.Left));
+            comps.Add(new ItemstackTextComponent(capi, FreshIcon(capi, e.Produce), 40, 6, EnumFloat.Inline));
 
         // The source label used to read "vanilla" for anything in the base game's domain, and
         // that was a claim the code could not back. A mod may ship its blocktypes under
@@ -324,16 +364,39 @@ public static class CropsRenderer
 
         if (e.Kind == CropKind.Mushroom)
         {
-            // Nothing, on purpose. The MUSHROOMS heading has already said the one true thing
-            // about the whole group, and repeating it on all 81 of them cost each card a full
-            // footprint to say what the reader had read at the top of the group. Eighty-one is
-            // measured, not estimated: 45 vanilla plus 36 from Mycodiversity, which registers
-            // into the game domain and so is easy to miscount as vanilla.
+            // The group note above says the one thing true of all 81 of them. What belongs HERE
+            // is only what differs species to species, and until now nothing did, because
+            // BuildMushrooms read a name and an icon and asked the block for nothing else.
             //
-            // There is also nothing else a mushroom could say here. BuildMushrooms leaves both
-            // temperature bounds NaN and sets no growth days, so GrowingLine returns an empty
-            // string, and PlantingWindow would fall back to a bare grow floor with no ceiling
-            // and report a fruiting season derived from nothing about the mushroom at all.
+            // Still no figures line and still no planting line: both temperature bounds are NaN
+            // by construction, so GrowingLine returns empty and PlantingWindow would fall back
+            // to a bare grow floor with no ceiling and report a season derived from nothing
+            // about the mushroom. The habitat band that would fill them lives in
+            // worldgen/blockpatches, which is a server-only asset category and unreachable from
+            // a client-side renderer without a packet.
+            string warn = WarningLine(e);
+            if (warn.Length > 0) comps.Add(new RichTextComponent(capi, warn + "\n", f.Voice));
+
+            // The habitat and ground lines need the forage atlas, which only exists once the
+            // server has answered. Absent it the card keeps the warning line and stops, which
+            // is the same graceful degradation the familiarity supplier gets.
+            var row = AlmanacIlluminatedModSystem.Instance?.ForageRowFor(e.ProduceCode);
+            if (row != null)
+            {
+                string habitat = HabitatLine(row, AlmanacIlluminatedModSystem.Instance!.AtlasMedianRain, e);
+                if (habitat.Length > 0)
+                    comps.Add(new RichTextComponent(capi, habitat + "\n", f.Muted));
+
+                // Takes the sowing accent, because it is the same promise in the same colour
+                // as a crop's planting line: this is what your own ground will do.
+                comps.Add(new RichTextComponent(capi, GroundLine(capi, row, homebase) + "\n", f.Sow));
+            }
+
+            // Outside the row guard on purpose. A dye comes from a barrel recipe, not from
+            // worldgen, so a species could yield one without the generator ever placing it.
+            string? dye = AlmanacIlluminatedModSystem.Instance?.DyeColourFor(e.ProduceCode);
+            if (dye != null)
+                comps.Add(new RichTextComponent(capi, DyeLine(dye) + "\n", f.Muted));
         }
         else if (st == null || st.Tier == CropTier.Versed)
         {
@@ -348,9 +411,13 @@ public static class CropsRenderer
         }
         else
         {
-            comps.Add(new RichTextComponent(capi, (st.KinOnly
+            // The kin line cannot apply to a perennial: it carries no family, so EffectiveCount
+            // is its own count and KinOnly can never be true. Kept as an explicit kind test
+            // rather than relying on that, because the reason is not visible from here.
+            bool perennial = e.Kind != CropKind.SeedCrop;
+            comps.Add(new RichTextComponent(capi, (!perennial && st.KinOnly
                 ? "Never grown. Its kin have taught you a little."
-                : "A stranger. Grow it once and the page begins.") + "\n", f.Voice));
+                : StrangerLine(e.Kind)) + "\n", f.Voice));
         }
 
         // FG mid-learn. Unreachable while FG is absent, and left in so a pack that runs it
@@ -358,7 +425,14 @@ public static class CropsRenderer
         if (!identified)
             comps.Add(new RichTextComponent(capi, $"Learning… {(int)(know * 100)}%\n", f.Muted));
 
-        comps.Add(new ClearFloatTextComponent(capi, 15));
+        // A crop sits inside a family whose rule reappears every two or three cards, so 15 was
+        // enough to keep one card off the next. A perennial or a mushroom has no such rule for
+        // pages at a time, and the icon float compounds it: the float is about two lines tall,
+        // so a card whose detail runs to a third line has that line clear the float and return
+        // to the column's LEFT margin, further left than the name it belongs to. At 15 that
+        // orphaned line sat closer to the card below than to its own. The extra air is what
+        // makes it read upward instead of down.
+        comps.Add(new ClearFloatTextComponent(capi, e.Kind == CropKind.SeedCrop ? 15 : 24));
         return comps;
     }
 
@@ -470,6 +544,21 @@ public static class CropsRenderer
         if (known && e.Kind == CropKind.SeedCrop)
             parts.Add($"needs {e.Nutrient}");
 
+        // The perennial figures, which are the reason the top tier is worth reaching. None of
+        // these appear anywhere in vanilla's own interface, on a hover or in the handbook.
+        if (known && e.Kind == CropKind.FruitTree)
+        {
+            if (e.Evergreen) parts.Add("evergreen");
+            else if (!float.IsNaN(e.VernalizationHours))
+                parts.Add($"needs {e.VernalizationHours:0}h under {e.VernalizationTemp:0}°");
+        }
+        else if (known && e.Kind == CropKind.BerryBush)
+        {
+            if (!float.IsNaN(e.DormantBelow)) parts.Add($"dormant under {e.DormantBelow:0}°");
+            if (!float.IsNaN(e.WakesAbove)) parts.Add($"wakes above {e.WakesAbove:0}°");
+            if (!float.IsNaN(e.DrawAtBest)) parts.Add($"draws {e.DrawAtBest:0.#} at its best");
+        }
+
         return string.Join(" · ", parts);
     }
 
@@ -481,10 +570,210 @@ public static class CropsRenderer
     /// </summary>
     private static string ShapeLine(ICoreClientAPI capi, CropEntry e)
     {
+        // A perennial has no CropProps and therefore no soil nutrient, so the hunger sentence
+        // below would print a default enum value as though it were a fact about the plant.
+        if (e.Kind != CropKind.SeedCrop) return PerennialShapeLine(capi, e);
+
         string hunger = $"It hungers for {e.Nutrient}.";
         string? second = FrostClause(e) ?? PaceClause(capi, e);
         if (second == null) return hunger;
         return hunger + " " + second;
+    }
+
+    /// <summary>
+    /// Where a species grows: its temperature band, what it grows on or under, and the ground
+    /// it wants. This is the line the whole atlas exists for.
+    ///
+    /// "Under conifers" is the most useful thing a forage page can say, because it is durably
+    /// true and tells a reader which direction to walk. It does not depend on what worldgen
+    /// did in this particular world, which is exactly the weakness of the ground line below.
+    ///
+    /// The wetness clause prints against the atlas's OWN median rather than a fixed number.
+    /// Every one of vanilla's 45 species sits at minRain 0.4 with no ceiling, so a constant
+    /// threshold would stamp the same clause on more than half the roster and say nothing.
+    /// Against the median, a species only speaks up where it actually differs from its peers.
+    /// </summary>
+    private static string HabitatLine(ForageAtlasRow row, float medianRain, CropEntry e)
+    {
+        var parts = new List<string>();
+
+        if (row.MinTemp > -90 || row.MaxTemp < 90)
+            parts.Add($"{row.MinTemp:0}° to {row.MaxTemp:0}°");
+
+        string tree = row.TreeType.ToLowerInvariant() switch
+        {
+            "decidious" => "broadleaf",     // vanilla's own spelling of the field value
+            "conifer" => "conifer",
+            "tropical" => "tropical",
+            _ => "",
+        };
+        string where = row.Placement.ToLowerInvariant() switch
+        {
+            "ontrees" => tree.Length > 0 ? $"on {tree} trunks" : "on trunks",
+            "undertrees" => tree.Length > 0 ? $"under {tree}" : "under trees",
+            _ => row.MaxForest >= 0 ? "in the open" : "",
+        };
+        if (where.Length > 0) parts.Add(where);
+
+        if (row.MaxRain >= 0) parts.Add("needs dry ground");
+        else if (row.MinRain >= medianRain + 0.1f) parts.Add("wants wet ground");
+        else if (row.MinRain <= medianRain - 0.15f) parts.Add("takes dry ground");
+        else if (row.MaxForest >= 0 && where != "in the open") parts.Add("not in deep wood");
+
+        if (e.StandsWinter) parts.Add("stands the winter");
+
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// Whether the reader's own ground suits the species, and in which months.
+    ///
+    /// Worded as CAPABILITY, never as a promise. A blockpatch envelope says where worldgen was
+    /// willing to place a species, not where one stands today: a patch can be absent for want
+    /// of a host tree or of fertility beneath it, and any world that has been played in has had
+    /// forest felled and ground rebuilt since. So this says the ground suits it. Saying "found
+    /// near you" over ground that holds none is how a field guide loses a reader's trust, and
+    /// promising a specific patch is the Forager's Memory's job, which it can do honestly
+    /// because it watched them pick one.
+    ///
+    /// Rainfall and forest cover are worldgen values rather than seasonal ones, so they are a
+    /// single pass-or-fail and are checked first; only temperature varies month to month.
+    /// </summary>
+    private static string GroundLine(ICoreClientAPI capi, ForageAtlasRow row, BlockPos? homebase)
+    {
+        if (homebase == null) return "Set a homebase to see where it grows";
+
+        var core = AlmanacIlluminatedModSystem.Instance;
+        float rain = core?.HomeRain ?? -1f;
+        float forest = core?.HomeForest ?? -1f;
+
+        if (rain >= 0)
+        {
+            if (rain < row.MinRain) return "Too dry at your base";
+            if (row.MaxRain >= 0 && rain > row.MaxRain) return "Too wet at your base";
+        }
+        if (forest >= 0 && row.MaxForest >= 0 && forest > row.MaxForest)
+            return "Your ground is too wooded";
+
+        // Same twelve-month sample the planting window takes, against the species' own band.
+        var pos = homebase.Copy();
+        int surfaceY = capi.World.BlockAccessor.GetTerrainMapheightAt(pos);
+        if (surfaceY > 0) pos.Y = surfaceY;
+        double dpm = capi.World.Calendar.DaysPerMonth;
+
+        var ok = new bool[12];
+        bool anyWarmer = false, anyCooler = false;
+        for (int m = 0; m < 12; m++)
+        {
+            var cc = capi.World.BlockAccessor.GetClimateAt(
+                pos, EnumGetClimateMode.ForSuppliedDate_TemperatureOnly, (m + 0.5) * dpm);
+            float t = cc?.Temperature ?? float.NaN;
+            if (float.IsNaN(t)) continue;
+            ok[m] = t >= row.MinTemp && t <= row.MaxTemp;
+            if (t > row.MaxTemp) anyWarmer = true;
+            if (t < row.MinTemp) anyCooler = true;
+        }
+
+        string? months = PlantingWindow.RangeString(ok);
+        if (months != null)
+            return months == "Year-round" ? "Your ground suits it, year-round" : $"Your ground suits it, {months}";
+
+        // Never in band. Name the direction it misses by, which is the actionable half.
+        if (anyCooler && !anyWarmer) return "Too cold at your base";
+        if (anyWarmer && !anyCooler) return "Too warm at your base";
+        return "Your base does not suit it";
+    }
+
+    /// <summary>
+    /// What a mushroom is worth knowing before you eat it, and nothing else.
+    ///
+    /// Banded rather than numeric on purpose. A figure invites arithmetic ("I have 14 health,
+    /// a -8 is survivable"), and the point of the line is a decision, not a calculation. The
+    /// bands come from the pack's own distribution rather than from round numbers: four species
+    /// sit at -20 or worse and will kill outright, ten cluster from -6 to -10, fourteen sit
+    /// between -1 and -2.5 where the danger is only quantity, and the remaining fifty-three are
+    /// ordinary food.
+    ///
+    /// Visions are a separate clause because two of the six psychedelic species are poisonous
+    /// as well, and a card that printed only one of those would be the dangerous kind of wrong.
+    ///
+    /// Standing through winter earns its place for a forager rather than an eater: it is the
+    /// difference between a species worth walking out for in the cold and one that is simply
+    /// gone. Both halves of the test are required, so tolerating deep cold alone does not
+    /// claim permanence.
+    /// </summary>
+    /// <summary>
+    /// What a barrel will make of it, for the species that make anything.
+    ///
+    /// The colour word arrives from the server exactly as the recipe's own output code spells
+    /// it, so a mod that adds a mushroom dye in a colour nobody has thought of yet reads
+    /// correctly with no change here. Phrased without an article so "orange" and "blue" both
+    /// scan, which is cheaper than teaching the page English.
+    /// </summary>
+    private static string DyeLine(string colour) =>
+        $"Steeped in a sealed barrel, it gives up {colour} dye.";
+
+    private static string WarningLine(CropEntry e)
+    {
+        var parts = new List<string>();
+
+        if (e.Toxicity <= -20) parts.Add("Deadly.");
+        else if (e.Toxicity <= -5) parts.Add("Poisonous.");
+        else if (e.Toxicity < 0) parts.Add("Sickening in quantity.");
+
+        if (e.Psychedelic > 0) parts.Add("Brings visions.");
+        if (e.StandsWinter) parts.Add("It stands the winter.");
+
+        return string.Join(" ", parts);
+    }
+
+    /// <summary>
+    /// What a stranger's page promises, in the terms of the thing being grown.
+    ///
+    /// A sown crop is grown from seed and the promise is a harvest. A perennial is grown from
+    /// a piece of another plant, and both its ladders start at propagation rather than at a
+    /// pick: an orchard because wild trees can be picked forever, a bush because a cutting only
+    /// counts off one somebody has already raised. So the sentence names the act that actually
+    /// opens the page instead of a generic one that would be false for two thirds of the tab.
+    /// </summary>
+    private static string StrangerLine(CropKind k) => k switch
+    {
+        CropKind.FruitTree => "A stranger. Root a cutting of your own and the page begins.",
+        CropKind.BerryBush => "A stranger. Set a cutting of your own and the page begins.",
+        _ => "A stranger. Grow it once and the page begins.",
+    };
+
+    /// <summary>
+    /// The Acquainted voice for a perennial, which cannot use the sown-crop one: a fruit tree
+    /// has no soil nutrient at all, so "It hungers for N" would be inventing a fact.
+    ///
+    /// Words only, no figures. That split is the whole point of the middle tier, and it is why
+    /// the vernalization sentence says "a real winter" here and prints hours at Versed.
+    /// </summary>
+    private static string PerennialShapeLine(ICoreClientAPI capi, CropEntry e)
+    {
+        var parts = new List<string>();
+
+        if (e.Kind == CropKind.FruitTree)
+        {
+            parts.Add(e.Evergreen ? "Evergreen." : "Deciduous.");
+            // The single most opaque fact an orchard has: a deciduous fruit tree banks cold
+            // hours and will not flower until it has them, and vanilla says so nowhere.
+            if (!e.Evergreen && !float.IsNaN(e.VernalizationHours))
+                parts.Add("It will not flower until it has had a real winter.");
+            else if (e.Evergreen)
+                parts.Add("It fruits without waiting on a winter.");
+        }
+        else if (e.Kind == CropKind.BerryBush)
+        {
+            if (!float.IsNaN(e.DormantBelow)) parts.Add("It sleeps through the cold and is late to wake.");
+            if (!float.IsNaN(e.DrawAtBest))
+                parts.Add(e.DrawAtBest <= 5 ? "It is a light feeder." : "It is a heavy feeder.");
+        }
+
+        string? frost = FrostClause(e) ?? PaceClause(capi, e);
+        if (frost != null) parts.Add(frost);
+        return parts.Count == 0 ? "You know its habits." : string.Join(" ", parts);
     }
 
     private static string? FrostClause(CropEntry e)

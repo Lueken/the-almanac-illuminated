@@ -32,6 +32,56 @@ public class AlmanacIlluminatedModSystem : ModSystem
     private bool homebaseProvisional;
     private Action? onHomebaseReceived;
 
+    /// <summary>The live client-side instance, for renderers that need session state the
+    /// page-building call chain does not carry. Client only and cleared on dispose, matching
+    /// the ClientInstance pattern the sibling mod already uses.</summary>
+    public static AlmanacIlluminatedModSystem? Instance;
+
+    // The forage atlas (Crops tab, mushrooms): worldgen habitat envelopes, which are a
+    // server-only asset category. Requested once per session alongside the homebase and
+    // cached; null simply means the card falls back to what the block registry already
+    // gives it, which is the same graceful-degradation posture the familiarity supplier
+    // takes when no supplier is registered.
+    private Dictionary<string, ForageAtlasRow>? forageAtlas;
+    private Dictionary<string, string>? forageDyes;
+    private float homeRain = -1f, homeForest = -1f, atlasMedianRain = 0.4f;
+    private bool forageAtlasRequested;
+
+    /// <summary>Habitat row for a species key, or null when no atlas has arrived.</summary>
+    public ForageAtlasRow? ForageRowFor(string produceCode)
+    {
+        if (forageAtlas == null) return null;
+        return forageAtlas.TryGetValue(ForageAtlas.Key(produceCode), out var row) ? row : null;
+    }
+
+    /// <summary>
+    /// Ask the server for the forage atlas, once per session that actually lands.
+    ///
+    /// Called from LevelFinalize, where the world is running and nothing is paused, and again
+    /// on every book open as a retry for the case where the channel was not yet up. The latch
+    /// is set only when the game is running: a paused integrated server may never process the
+    /// packet, and latching on a send it did not answer would strand the atlas for the session.
+    /// </summary>
+    private void RequestForageAtlas()
+    {
+        if (forageAtlas != null || forageAtlasRequested) return;
+        if (clientChannel?.Connected != true) return;
+        clientChannel.SendPacket(new ForageAtlasRequest());
+        forageAtlasRequested = capi?.IsGamePaused != true;
+    }
+
+    /// <summary>Dye colour for a species key, or null when no atlas has arrived or the species
+    /// yields none. Most yield none, so absence is the ordinary case and never an error.</summary>
+    public string? DyeColourFor(string produceCode)
+    {
+        if (forageDyes == null) return null;
+        return forageDyes.TryGetValue(ForageAtlas.Key(produceCode), out var colour) ? colour : null;
+    }
+
+    public float HomeRain => homeRain;
+    public float HomeForest => homeForest;
+    public float AtlasMedianRain => atlasMedianRain;
+
     // Book tabs registered by other mods (TCM's Callings first). Initialized
     // inline so registration is safe regardless of ModSystem start order.
     private readonly List<IAlmanacBookTab> bookTabs = new();
@@ -42,6 +92,10 @@ public class AlmanacIlluminatedModSystem : ModSystem
     // retired in 0.2.0, so a machine that cannot run the capture cannot open the
     // book, and says so plainly rather than failing quietly.
     private PhysicalBookView? physicalView;
+
+    /// <summary>The binding the reader chose (a CoverLibrary key). Theirs alone: no guide
+    /// pack may set it, so two people reading the same book can bind it differently.</summary>
+    private string coverKey = CoverLibrary.DefaultKey;
     /// <summary>Pause the singleplayer world while the book is open. Default on; the book
     /// exists to be read, and reading should not cost daylight.</summary>
     private bool pauseOnOpen = true;
@@ -206,7 +260,10 @@ public class AlmanacIlluminatedModSystem : ModSystem
             .RegisterMessageType<HomebaseRequest>()
             .RegisterMessageType<HomebaseResponse>()
             .RegisterMessageType<ReadingState>()
+            .RegisterMessageType<ForageAtlasRequest>()
+            .RegisterMessageType<ForageAtlasResponse>()
             .SetMessageHandler<HomebaseRequest>(OnHomebaseRequest)
+            .SetMessageHandler<ForageAtlasRequest>(OnForageAtlasRequest)
             .SetMessageHandler<ReadingState>(OnReadingState);
 
         // A crash or disconnect mid-read must not strand the flag: reading state is
@@ -226,19 +283,75 @@ public class AlmanacIlluminatedModSystem : ModSystem
         wa.MarkPathDirty(ReadingHands.Attr);
     }
 
+    /// <summary>
+    /// Build the atlas and answer with it, plus the reader's own ground.
+    ///
+    /// Rebuilt per request rather than cached server-side. It is one walk of an asset
+    /// category that is already in memory, it happens once per player per session, and a
+    /// cache would need an invalidation story for a thing that cannot change without a
+    /// restart. Cheap beats clever here.
+    /// </summary>
+    private void OnForageAtlasRequest(IServerPlayer fromPlayer, ForageAtlasRequest req)
+    {
+        if (sapi == null) return;
+        try
+        {
+            var rows = ForageAtlas.Build(sapi);
+            var dyes = ForageAtlas.BuildDyes(sapi);
+            var reply = new ForageAtlasResponse { Rows = rows, Dyes = dyes, MedianRain = ForageAtlas.MedianRain(rows) };
+            serverChannel?.SendPacket(reply, fromPlayer);
+            IlluminatedLogger.Info(sapi, "crops",
+                $"forage atlas sent to {fromPlayer.PlayerName}: {rows.Count} mushroom row(s), "
+                + $"{dyes.Count} dye species, median minRain {reply.MedianRain:0.##}");
+        }
+        catch (Exception e)
+        {
+            IlluminatedLogger.Warn(sapi, "crops", $"forage atlas build failed ({e.Message}); client keeps its plain cards");
+        }
+    }
+
     private void OnHomebaseRequest(IServerPlayer fromPlayer, HomebaseRequest req)
     {
         var pos = fromPlayer.GetSpawnPosition(false);   // resolved: bed spawn, else world default
         // No public getter for the raw bed spawn; infer it by divergence from world default.
         var def = sapi?.World.DefaultSpawnPosition;
         bool bed = def == null || Math.Abs(pos.X - def.X) > 1 || Math.Abs(pos.Z - def.Z) > 1;
+        // The ground at that spawn, read on the side that is known to resolve it:
+        // WorldGenValues is what populates ForestDensity, and every call to it in the
+        // survival source sits on a server path.
+        var climate = sapi?.World.BlockAccessor.GetClimateAt(
+            new BlockPos((int)pos.X, (int)pos.Y, (int)pos.Z), EnumGetClimateMode.WorldGenValues);
+
         serverChannel?.SendPacket(new HomebaseResponse
         {
             X = (int)pos.X,
             Y = (int)pos.Y,
             Z = (int)pos.Z,
             BedSpawn = bed,
+            Rain = climate?.Rainfall ?? -1f,
+            Forest = climate?.ForestDensity ?? -1f,
         }, fromPlayer);
+    }
+
+    private void OnForageAtlasResponse(ForageAtlasResponse msg)
+    {
+        var map = new Dictionary<string, ForageAtlasRow>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in msg.Rows) map[row.Key] = row;
+        forageAtlas = map;
+        atlasMedianRain = msg.MedianRain;
+
+        var dyeMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dye in msg.Dyes) dyeMap[dye.Key] = dye.Colour;
+        forageDyes = dyeMap;
+
+        if (capi != null)
+            IlluminatedLogger.Info(capi, "crops",
+                $"forage atlas received: {map.Count} mushroom row(s), {dyeMap.Count} dye species, "
+                + $"median minRain {atlasMedianRain:0.##}");
+
+        // Cards already drawn were built without habitat lines. Redraw so the reader is not
+        // left with a thinner page than the data now supports.
+        bookDialog?.RefreshSpread();
     }
 
     private void OnHomebaseResponse(HomebaseResponse msg)
@@ -247,6 +360,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
         homebasePos = new BlockPos(msg.X, msg.Y, msg.Z);
         homebaseLabel = msg.BedSpawn ? "your bed" : "world spawn";
         homebaseProvisional = false;
+        // Refreshed with the position, because they describe the same place and a bed can move.
+        homeRain = msg.Rain;
+        homeForest = msg.Forest;
 
         var cb = onHomebaseReceived;
         onHomebaseReceived = null;
@@ -277,6 +393,15 @@ public class AlmanacIlluminatedModSystem : ModSystem
         // let the real position arrive later if it ever does.
         bool serverCanAnswer = clientChannel?.Connected == true && capi?.IsGamePaused != true;
 
+        // Asked here, and deliberately OUTSIDE the branch below. Sharing serverCanAnswer meant
+        // the atlas was never asked for at all in singleplayer: this book pauses the game while
+        // it is open, so IsGamePaused is true on every path that runs from a book open, and the
+        // one thing that fired the request could never satisfy the condition gating it. Every
+        // mushroom card rendered with no habitat, no ground and no dye, in a world where all of
+        // that data was sitting on the other side of one packet. Nothing waits on this answer,
+        // so it never belonged behind the gate that exists for the ones that do.
+        RequestForageAtlas();
+
         if (serverCanAnswer)
         {
             onHomebaseReceived = onReady;
@@ -300,12 +425,22 @@ public class AlmanacIlluminatedModSystem : ModSystem
     public override void StartClientSide(ICoreClientAPI api)
     {
         capi = api;
+        Instance = this;
 
         clientChannel = api.Network.RegisterChannel(ChannelName)
             .RegisterMessageType<HomebaseRequest>()
             .RegisterMessageType<HomebaseResponse>()
             .RegisterMessageType<ReadingState>()
-            .SetMessageHandler<HomebaseResponse>(OnHomebaseResponse);
+            .RegisterMessageType<ForageAtlasRequest>()
+            .RegisterMessageType<ForageAtlasResponse>()
+            .SetMessageHandler<HomebaseResponse>(OnHomebaseResponse)
+            .SetMessageHandler<ForageAtlasResponse>(OnForageAtlasResponse);
+
+        // The atlas is asked for from here rather than from the book, because the book pauses
+        // the game while it is open and a paused integrated server does not answer. By level
+        // finalize the world is running and the channel is up, which is the one moment that is
+        // reliably true in both singleplayer and on a server.
+        api.Event.LevelFinalize += RequestForageAtlas;
 
         // The in-hands book (renderer patch). Init only wires the hook; the dummy
         // item resolves lazily on first render, after registries are ready.
@@ -346,6 +481,8 @@ public class AlmanacIlluminatedModSystem : ModSystem
         // chained callback until the cache is warm. Opening the book early just stops
         // the chain and takes the remaining cost the old way.
         api.Event.LevelFinalize += () => api.Event.RegisterCallback(_ => WarmPaginateStep(api), 1500);
+        physicalView.SetCover(CoverLibrary.TextureOf(coverKey));
+        RegisterBookTab(new BindingTab(() => coverKey, SetCover));
         physicalView.OnCaptureUnavailable = OnCaptureUnavailable;
         api.Event.RegisterRenderer(physicalView, EnumRenderStage.Ortho, "almanacilluminated-bookview");
 
@@ -551,6 +688,20 @@ public class AlmanacIlluminatedModSystem : ModSystem
         bookDialog.TryOpen();
     }
 
+    /// <summary>Bind the book in a new material: remember it, re-skin the boards, and
+    /// keep it. Called from the Binding tab on a click, so it must be cheap and must not
+    /// disturb the open book beyond the cover itself — only the three meshes carrying the
+    /// cover are rebuilt, and the reader stays on the page they were reading.</summary>
+    private void SetCover(string key)
+    {
+        CoverLibrary.Cover cover = CoverLibrary.Resolve(key);
+        if (cover.Key == coverKey) return;
+        coverKey = cover.Key;
+        physicalView?.SetCover(CoverLibrary.TextureOf(coverKey));
+        SaveSettings();
+        IlluminatedLogger.Info(capi!, "book", $"Bound in {cover.Display} ({cover.Texture}).");
+    }
+
     /// <summary>What the player is told when the book cannot be drawn at all.</summary>
     private const string CaptureLostLine =
         "The Almanac cannot be drawn on this machine — its page needs an offscreen "
@@ -599,6 +750,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
             if (cfg != null)
             {
                 pauseOnOpen = cfg.PauseOnOpen; loadedKnobs = cfg;
+                coverKey = CoverLibrary.Resolve(cfg.Cover).Key;
                 respectWorldLight = cfg.RespectLight ?? true;
                 illuminationFloor = IlluminationCurve.ClampFloor(cfg.LightFloor ?? IlluminationCurve.DefaultFloor);
                 if (System.Enum.TryParse<GrowthMarksStyle>(cfg.CropMarks, true, out var st)) CropMarks = st;
@@ -618,6 +770,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
             var cfg = new BookSettings
             {
                 PauseOnOpen = pauseOnOpen,
+                Cover = coverKey,
                 RespectLight = respectWorldLight,
                 LightFloor = illuminationFloor,
                 CropMarks = CropMarks.ToString(),
@@ -682,6 +835,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
         /// <summary>Singleplayer reading pause (on by default; `.almbook pause off` to
         /// keep the days moving). Saved but inert in multiplayer.</summary>
         public bool PauseOnOpen = true;
+
+        /// <summary>The reader's binding (a CoverLibrary key). Absent = the shipped boards.</summary>
+        public string? Cover;
 
         /// <summary>Shade the book by the light reaching the reader (`.almbook light`).
         /// Nullable like the knobs below: absent = the shipped default (on).</summary>
@@ -1128,6 +1284,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
 
     public override void Dispose()
     {
+        // Only drop the handle if it still points at this instance: a client and a server
+        // ModSystem both run in singleplayer, and a blind null would strand the survivor.
+        if (ReferenceEquals(Instance, this)) Instance = null;
         ReadingHands.Dispose();
         StopPreviewWatcher();
         physicalView?.Dispose();

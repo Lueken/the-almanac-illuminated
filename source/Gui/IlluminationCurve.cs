@@ -38,10 +38,21 @@ public static class IlluminationCurve
     /// evaluation time.</summary>
     private static readonly (float X, float Y)[] Points =
     {
-        (0.45f, 0.53f),
-        (0.90f, 1.00f),    // bright torch/lantern nearby → full book brightness
+        (0.25f, 0.72f),    // dim room, overcast, deep shade → dim page, still plainly readable
+        (0.60f, 1.00f),    // ordinary light, indoors or out → full book brightness
         (1.00f, 1.00f),    // table saturates at 1.0 → flat tail
     };
+
+    // Retuned 2026-08-26 after measuring a screenshot: the page was rendering at
+    // #887F63 against its own #EBDEB2, a flat 0.57 on every channel. The shade was
+    // not a bug — the old anchors (0.45, 0.53) really do halve the page in half
+    // light, and half light is where a reader usually stands. That is punishing
+    // without being informative: this is a book someone deliberately opened, held
+    // at arm's length, not a surface lit incidentally by the world.
+    //
+    // The floor is untouched, so true darkness still costs you the page and a lamp
+    // still changes the reading. Only the middle moved, where the old curve was
+    // dimming pages that had plenty of light to read by.
 
     /// <summary>Evaluate the response curve at <paramref name="localBrightness"/> (clamped
     /// to 0..1) with <paramref name="floor"/> as the x=0 anchor. Piecewise-linear between

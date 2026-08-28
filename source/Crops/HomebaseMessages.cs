@@ -19,6 +19,20 @@ public class HomebaseResponse
     [ProtoMember(2)] public int Y;
     [ProtoMember(3)] public int Z;
     [ProtoMember(4)] public bool BedSpawn;
+
+    /// <summary>Worldgen rainfall and forest density AT that spawn, read server-side.
+    ///
+    /// They ride this reply rather than the forage atlas because they describe the PLAYER's
+    /// ground, not the world's assets, and the two have different lifetimes: the atlas cannot
+    /// change without a restart, but a bed can be moved mid-session. Cached with the atlas
+    /// they went stale the moment somebody slept somewhere new, which left the card judging
+    /// rainfall at the old base while it judged temperature at the new one.
+    ///
+    /// Read here rather than sampled on the client because every WorldGenValues call in the
+    /// survival source sits on a server path, and whether ForestDensity resolves client-side
+    /// was never confirmed. -1 means the server could not read it.</summary>
+    [ProtoMember(5)] public float Rain = -1f;
+    [ProtoMember(6)] public float Forest = -1f;
 }
 
 /// <summary>

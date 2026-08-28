@@ -980,6 +980,12 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
                 bookMeshFailed = true;
                 return;
             }
+            if (coverOverride != null && shapeDoc.Textures != null)
+            {
+                // The boards, the spine and the gutter all bind "cover"; overriding the
+                // shape's own entry re-skins them together and leaves the pages alone.
+                shapeDoc.Textures["cover"] = coverOverride.Clone();
+            }
             var texSource = new ShapeTexSource(capi, shapeDoc);
             MeshRef Tess(string label, params string[] names)
             {
@@ -1657,6 +1663,22 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     /// only when they weren't handed an active gui shader, and GL state is
     /// never flipped back "on" behind the engine's back.
     /// </summary>
+    /// <summary>The material the boards wear. Null = the shape's own default. Setting a
+    /// different one drops the three meshes that carry the cover — the two boards and the
+    /// spine — so the next frame re-tesselates them against the new texture; nothing else
+    /// about the book is touched.</summary>
+    private AssetLocation? coverOverride;
+
+    public void SetCover(AssetLocation? texture)
+    {
+        if (coverOverride?.ToString() == texture?.ToString()) return;
+        coverOverride = texture;
+        spineRef?.Dispose(); spineRef = null;
+        bodyLeftRef?.Dispose(); bodyLeftRef = null;
+        bodyRightRef?.Dispose(); bodyRightRef = null;
+        bookMeshFailed = false;   // a previous failure must not outlive a change of cover
+    }
+
     // Ambient shade (local illumination): final per-channel multipliers folded into every
     // DrawMesh, so the whole modeled book — spine, pages, sheet, scraps, tabs, labels —
     // darkens and warms as one object under the reader's light. Neutral by default.

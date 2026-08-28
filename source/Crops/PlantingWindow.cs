@@ -96,8 +96,10 @@ public sealed class PlantingWindow
         return min;
     }
 
-    /// <summary>"Year-round", "Apr–Jun", "Apr–Jun, Sep–Oct", or null if no month is flagged.</summary>
-    private static string? RangeString(bool[] flags)
+    /// <summary>"Year-round", "Apr–Jun", "Apr–Jun, Sep–Oct", or null if no month is flagged.
+    /// Internal rather than private so the mushroom habitat line can say months the same way a
+    /// planting window does; two spellings of a date range on one page would read as a bug.</summary>
+    internal static string? RangeString(bool[] flags)
     {
         int count = 0;
         foreach (bool f in flags) if (f) count++;
