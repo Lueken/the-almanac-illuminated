@@ -472,7 +472,7 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
 
     private void UpdateLens()
     {
-        if (TextLens.Filter == null) return;
+        if (TextLens.Filter == null && TextLens.PlainFilter == null) return;
 
         if (TextLens.Generation != lastLensGen)
         {

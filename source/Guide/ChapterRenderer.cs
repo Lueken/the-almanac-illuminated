@@ -83,11 +83,22 @@ public static class ChapterRenderer
         try { return f(text, unchecked(ordinal * 2654435761L)); } catch { return text; }
     }
 
+    /// <summary>As <see cref="Lens"/>, but through the PLAIN filter, for runs whose
+    /// component renders text verbatim (callout boxes) — markup from the rich
+    /// filter would print literally there.</summary>
+    private static string LensPlain(string text, out int ordinal)
+    {
+        ordinal = runCounter++;
+        var f = TextLens.PlainFilter;
+        if (f == null || string.IsNullOrEmpty(text) || TextLens.SteadyRuns.Contains(ordinal)) return text;
+        try { return f(text, unchecked(ordinal * 2654435761L)); } catch { return text; }
+    }
+
     /// <summary>Stamp components [from..end) as belonging to a run, so the dialog's
     /// lens hit-test can steady exactly the lines under the cursor.</summary>
     private static void Tag(List<RichTextComponentBase> comps, int from, int ordinal)
     {
-        if (TextLens.Filter == null) return;
+        if (TextLens.Filter == null && TextLens.PlainFilter == null) return;
         for (int i = from; i < comps.Count; i++)
             TextLens.RunOf.AddOrUpdate(comps[i], new System.Runtime.CompilerServices.StrongBox<int>(ordinal));
     }
@@ -171,7 +182,7 @@ public static class ChapterRenderer
             string? secTitle = GuideLibrary.Localize(sec.Title);
             if (!string.IsNullOrEmpty(secTitle))
             {
-                string tt = Lens(SmallCaps(secTitle!), out int titleOrd);
+                string tt = LensPlain(SmallCaps(secTitle!), out int titleOrd);
                 title.Add(new RichTextComponent(capi, tt + "\n", heading) { UnscaledMarginTop = HeadingTopMargin });
                 Tag(title, title.Count - 1, titleOrd);
             }
@@ -182,7 +193,7 @@ public static class ChapterRenderer
             if (!string.IsNullOrEmpty(sec.RevealedBy)
                 && revealHost != null && !revealHost.IsRevealed(sec.RevealedBy!))
             {
-                string hintText = Lens(GuideLibrary.Localize(sec.Hint)
+                string hintText = LensPlain(GuideLibrary.Localize(sec.Hint)
                     ?? Lang.Get("almanacilluminated:guide-unrevealed"), out int hintOrd);
                 var hintFont = italic.Clone().WithColor(new[] { 0.38, 0.32, 0.25, 1.0 });
                 var hintAtom = new Atom { PageBreakBefore = sec.PageBreakBefore };
@@ -413,12 +424,23 @@ public static class ChapterRenderer
                 var grey = body.Clone().WithColor(new[] { 0.45, 0.40, 0.33, 1.0 });
                 foreach (var e in library.ModEntries(addedOnly: !all))
                 {
-                    string nm = Lens(e.Name, out int entryOrd);
+                    // Link entries parse markup (rich filter); the greyed
+                    // not-yet-added entries render plain (plain filter).
                     int entryStart = comps.Count;
+                    int entryOrd;
                     if (e.Chapter != null)
+                    {
+                        // Plain filter even though this parses markup: the name sits
+                        // INSIDE an anchor, and a font span nested in <a> is the one
+                        // VTML nesting not proven safe. Holes carry no markup.
+                        string nm = LensPlain(e.Name, out entryOrd);
                         comps.AddRange(VtmlUtil.Richtextify(capi, $"  <a href=\"almanac://chapter/{e.Chapter.Id}\">{nm}</a>\n", body, onLink));
+                    }
                     else
+                    {
+                        string nm = LensPlain(e.Name, out entryOrd);
                         comps.Add(new RichTextComponent(capi, "  " + nm + "\n", grey));
+                    }
                     Tag(comps, entryStart, entryOrd);
                 }
                 break;
@@ -426,7 +448,7 @@ public static class ChapterRenderer
 
             case "heading":
             {
-                string ht = Lens(SmallCaps(block.Str("text") ?? ""), out int headOrd);
+                string ht = LensPlain(SmallCaps(block.Str("text") ?? ""), out int headOrd);
                 comps.Add(new RichTextComponent(capi, ht + "\n",
                     CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifDecorative).WithFontSize(21f)
                         .WithWeight(Cairo.FontWeight.Bold).WithColor(Ink))
@@ -497,7 +519,7 @@ public static class ChapterRenderer
                 // the line but reserved almost no height, so the box's bottom
                 // collided with the following heading).
                 comps.Add(new ClearFloatTextComponent(capi, (float)CalloutComponent.OuterMargin));
-                string calloutText = Lens(block.Str("text") ?? "", out int calloutOrd);
+                string calloutText = LensPlain(block.Str("text") ?? "", out int calloutOrd);
                 if (variant == "author")
                 {
                     comps.Add(new AuthorCalloutComponent(capi, calloutText, italic, authorInitial));
@@ -542,7 +564,7 @@ public static class ChapterRenderer
                     // are in the font, so the mark is now unmistakable on its own.
                     // The checkbox mark stays clean (it is state, not prose); the
                     // objective's text foxes with the rest of the page.
-                    string questText = Lens(it["text"]?.ToString() ?? "", out int questOrd);
+                    string questText = LensPlain(it["text"]?.ToString() ?? "", out int questOrd);
                     comps.Add(new RichTextComponent(capi,
                         "  " + (done ? "[×] " : "[ ] ") + questText + "\n",
                         done ? doneFont : italic));
@@ -579,7 +601,8 @@ public static class ChapterRenderer
             case "link":
             {
                 string to = block.Str("to") ?? "";
-                string text = Lens(block.Str("text") ?? to, out int linkOrd);
+                // Plain filter: display text lands inside the anchor (see contents).
+                string text = LensPlain(block.Str("text") ?? to, out int linkOrd);
                 var parts = VtmlUtil.Richtextify(capi, $"<a href=\"{to}\">{text}</a>\n", body, onLink);
                 if (parts.Length > 0) parts[0].UnscaledMarginTop = 8;   // clear the block above (often a callout)
                 int linkStart = comps.Count;
@@ -604,7 +627,7 @@ public static class ChapterRenderer
                 string? caption = block.Str("caption");
                 if (!string.IsNullOrEmpty(caption))
                 {
-                    string ct = Lens(caption!, out int capOrd);
+                    string ct = LensPlain(caption!, out int capOrd);
                     var capFont = italic.Clone().WithOrientation(EnumTextOrientation.Center);
                     comps.Add(new RichTextComponent(capi, "\n" + ct + "\n", capFont));
                     Tag(comps, comps.Count - 1, capOrd);
