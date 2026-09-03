@@ -57,4 +57,11 @@ public static class TextLens
 
     /// <summary>Radius of the steadied window around the cursor, unscaled px. [TUNE]</summary>
     public static double LensRadius = 70;
+
+    /// <summary>True once the book's fonts can render combining marks (the bundled
+    /// derivative serifs registered — see FontRegistry). A wirer whose transform
+    /// leans on combining marks should check this and fall back to a markless
+    /// vocabulary when false: the game's own Lora/Almendra draw every mark as a
+    /// tofu box. Set before any compose, at client font registration.</summary>
+    public static bool MarksCapable;
 }

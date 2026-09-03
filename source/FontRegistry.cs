@@ -26,9 +26,19 @@ public static class FontRegistry
     public const string Sans = "Josefin Sans";       // UI chrome: tabs, keybinds, page numbers
     public const string DisplaySans = "Odibee Sans"; // small-caps section headers
 
-    // Shipped manuscript serifs (always available, no registration needed).
-    public const string SerifBody = "Lora";
-    public const string SerifDecorative = "Almendra";
+    // Manuscript serifs. The game's own Lora/Almendra carry ZERO combining marks
+    // (cmap verified 2026-09-03), which is why THE SPOTTED PAGE's garble drew
+    // tofu boxes. The bundled derivatives — "Illuminated Serif"/"Illuminated
+    // Decorative", built by tools/build-foxed-fonts.py — are those same faces
+    // with the nine marks the game's Montserrat carries grafted in (all OFL;
+    // renamed per the license's Reserved Font Name rule). When all seven faces
+    // register, the book swaps to them: pixel-identical rendering until a
+    // combining mark is actually asked for. Where registration is unavailable
+    // the game families stay and TextLens.MarksCapable stays false, so a lens
+    // wirer can pick a markless vocabulary instead.
+    public static string SerifBody => foxCapable ? "Illuminated Serif" : "Lora";
+    public static string SerifDecorative => foxCapable ? "Illuminated Decorative" : "Almendra";
+    private static bool foxCapable;
 
     private static readonly string[] FontFiles =
     {
@@ -36,6 +46,17 @@ public static class FontRegistry
         "JosefinSans-Italic.ttf", "JosefinSans-BoldItalic.ttf",
         "JosefinSans-SemiBold.ttf", "JosefinSans-Light.ttf",
         "OdibeeSans-Regular.ttf",
+    };
+
+    /// <summary>The mark-capable serif derivatives. Registered as a set: a partial
+    /// registration would let GDI substitute faces across families mid-paragraph,
+    /// so it is all seven or none.</summary>
+    private static readonly string[] FoxedFontFiles =
+    {
+        "IlluminatedSerif-Regular.ttf", "IlluminatedSerif-Italic.ttf",
+        "IlluminatedSerif-Bold.ttf", "IlluminatedSerif-BoldItalic.ttf",
+        "IlluminatedDecorative-Regular.ttf", "IlluminatedDecorative-Italic.ttf",
+        "IlluminatedDecorative-Bold.ttf",
     };
 
     private const string AssetSubPath = "assets/almanacilluminated/fonts";
@@ -72,8 +93,7 @@ public static class FontRegistry
         string cacheDir = Path.Combine(GamePaths.Cache, "almanacilluminated-fonts");
         Directory.CreateDirectory(cacheDir);
 
-        int ok = 0;
-        foreach (var file in FontFiles)
+        int RegisterOne(string file)
         {
             try
             {
@@ -81,21 +101,33 @@ public static class FontRegistry
                 if (!ExtractFont(mod, file, dest))
                 {
                     IlluminatedLogger.Warn(capi, "fonts", $"Font not found in mod: {file}");
-                    continue;
+                    return 0;
                 }
 
                 int added = AddFontResourceExW(dest, FR_PRIVATE, 0);
-                if (added > 0) { ok++; IlluminatedLogger.Debug(capi, "fonts", $"Registered {file} ({added} face(s))"); }
-                else IlluminatedLogger.Warn(capi, "fonts", $"AddFontResourceExW returned 0 for {file}");
+                if (added > 0) { IlluminatedLogger.Debug(capi, "fonts", $"Registered {file} ({added} face(s))"); return 1; }
+                IlluminatedLogger.Warn(capi, "fonts", $"AddFontResourceExW returned 0 for {file}");
             }
             catch (System.Exception e)
             {
                 IlluminatedLogger.Error(capi, "fonts", $"Failed registering {file}: {e.Message}");
             }
+            return 0;
         }
 
+        int ok = 0;
+        foreach (var file in FontFiles) ok += RegisterOne(file);
+
+        int foxed = 0;
+        foreach (var file in FoxedFontFiles) foxed += RegisterOne(file);
+        foxCapable = foxed == FoxedFontFiles.Length;
+        TextLens.MarksCapable = foxCapable;
+
         IlluminatedLogger.Info(capi, "fonts",
-            $"Registered {ok}/{FontFiles.Length} font files — families: '{Script}', '{Sans}', '{DisplaySans}'");
+            $"Registered {ok}/{FontFiles.Length} font files — families: '{Script}', '{Sans}', '{DisplaySans}'; "
+            + (foxCapable
+                ? $"mark-capable serifs up ({foxed}/{FoxedFontFiles.Length}) — body '{SerifBody}', decorative '{SerifDecorative}'"
+                : $"mark-capable serifs incomplete ({foxed}/{FoxedFontFiles.Length}) — staying on the game's Lora/Almendra"));
     }
 
     /// <summary>Copy (folder mod) or extract (zip mod) one font file to dest. Returns false if absent.</summary>
