@@ -456,6 +456,101 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         {
             ComposeSpread();
         }
+        UpdateLens();
+    }
+
+    // ---- THE SPOTTED PAGE: the external lens over the book's text --------------
+    // The seam (TextLens) carries a text transform some other mod wired; this is
+    // the spatial half the book owns. Two jobs, both cheap when nothing changed:
+    // notice a Generation bump (the transform's ambient state moved) and drop the
+    // pagination cache, and while the reader's lens is held, steady exactly the
+    // runs under a small window at the cursor. Zero-width marks mean a steadied
+    // recompose swaps ink in place with no reflow, which is what sells the effect.
+
+    private int lastLensGen;
+    private GuidePack? lensChapter;
+
+    private void UpdateLens()
+    {
+        if (TextLens.Filter == null) return;
+
+        if (TextLens.Generation != lastLensGen)
+        {
+            lastLensGen = TextLens.Generation;
+            // Clear, never null: a null cache re-paginates the whole library on the
+            // next compose (the warm pass); a cleared one re-renders per chapter,
+            // lazily, as each is visited under the new state.
+            cache?.Clear();
+            if (IsOpened()) ComposeSpread();
+        }
+
+        // Only chapters compose through the filter today, so only a chapter spread
+        // hit-tests. (Crops/weather/external columns are unlensed for now.)
+        bool chapterShowing = IsOpened() && current != null && pages != null
+            && !journalMode && !cropsMode && !weatherMode && externalTab == null;
+        bool held = chapterShowing && TextLens.LensHeld?.Invoke() == true;
+
+        if (!held)
+        {
+            if (TextLens.SteadyRuns.Count > 0)
+            {
+                // The lens came away: the steadied window spots back over.
+                TextLens.SteadyRuns.Clear();
+                if (current != null) cache?.Remove(current);
+                if (IsOpened()) ComposeSpread();
+            }
+            lensChapter = null;
+            return;
+        }
+
+        // Ordinals restart per chapter; a steady set carried across a chapter
+        // switch would steady arbitrary runs of the new one.
+        if (lensChapter != current)
+        {
+            TextLens.SteadyRuns.Clear();
+            lensChapter = current;
+        }
+
+        var want = new HashSet<int>();
+        if (PhysicalMirror != null
+            && PhysicalMirror.TryRemap(capi.Input.MouseX, capi.Input.MouseY, out int rx, out int ry))
+        {
+            double radius = GuiElement.scaled(TextLens.LensRadius);
+            CollectLensRuns(want, "leftpage", rx, ry, radius);
+            CollectLensRuns(want, "rightpage", rx, ry, radius);
+        }
+
+        if (!want.SetEquals(TextLens.SteadyRuns))
+        {
+            TextLens.SteadyRuns.Clear();
+            foreach (int o in want) TextLens.SteadyRuns.Add(o);
+            cache?.Remove(current!);
+            ComposeSpread();
+        }
+    }
+
+    /// <summary>Collect the run ordinals whose laid-out lines fall within the lens
+    /// circle. Component line bounds are relative to the richtext element, so the
+    /// element's absolute origin offsets them into the same space as the remapped
+    /// cursor.</summary>
+    private void CollectLensRuns(HashSet<int> into, string key, double mx, double my, double radius)
+    {
+        var rt = SingleComposer?.GetRichtext(key);
+        if (rt?.Components == null) return;
+        double ox = rt.Bounds.absX, oy = rt.Bounds.absY;
+        foreach (var comp in rt.Components)
+        {
+            if (comp?.BoundsPerLine == null) continue;
+            if (!TextLens.RunOf.TryGetValue(comp, out var box)) continue;
+            foreach (var lb in comp.BoundsPerLine)
+            {
+                // Nearest point on the line's rect to the cursor, against the radius.
+                double cx = System.Math.Clamp(mx, ox + lb.X, ox + lb.X + lb.Width);
+                double cy = System.Math.Clamp(my, oy + lb.Y, oy + lb.Y + lb.Height);
+                double dx = mx - cx, dy = my - cy;
+                if (dx * dx + dy * dy <= radius * radius) { into.Add(box.Value); break; }
+            }
+        }
     }
 
     /// <summary>
@@ -757,12 +852,21 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     /// <summary>Update the model on each keystroke and schedule a debounced auto-save.</summary>
     private void OnJournalTextChanged(string text)
     {
-        if (spreadIndex >= 0 && spreadIndex < journalSpreads.Count) journalSpreads[spreadIndex] = text;
+        // SetValue during ComposeSpread also lands here; an unchanged text is that
+        // recompose, not an edit, and must not dirty the journal or schedule a save.
+        if (spreadIndex >= 0 && spreadIndex < journalSpreads.Count)
+        {
+            if (journalSpreads[spreadIndex] == text) return;
+            journalSpreads[spreadIndex] = text;
+        }
         journalDirty = true;
 
         // Save 3s after the last keystroke: each edit supersedes the prior timer.
+        // permittedWhilePaused: in singleplayer the open book pauses the game, so
+        // every journal keystroke happens paused; without the flag registration
+        // crashes under extendedDebugInfo and the save waits for unpause otherwise.
         long token = ++editToken;
-        capi.Event.RegisterCallback(_ => { if (token == editToken && journalDirty) SaveJournal(); }, 3000);
+        capi.Event.RegisterCallback(_ => { if (token == editToken && journalDirty) SaveJournal(); }, 3000, permittedWhilePaused: true);
     }
 
     private bool OnJournalSave()

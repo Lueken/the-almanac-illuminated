@@ -55,8 +55,41 @@ public static class ChapterRenderer
     /// </summary>
     public static List<RichTextComponentBase[]> RenderPages(ICoreClientAPI capi, GuidePack pack, GuideLibrary library, Action<LinkTextComponent>? onLink, double pageWidth, double pageHeight)
     {
+        // Run ordinals restart per chapter so they are stable across recomposes of
+        // the same pack — the lens's steady set is keyed on them.
+        runCounter = 0;
         var atoms = BuildAtoms(capi, pack, library, onLink);
         return Paginate(capi, atoms, pageWidth, pageHeight);
+    }
+
+    // ---- THE SPOTTED PAGE (TextLens seam) --------------------------------------
+    // Every text run passes through Lens() on its way to components, and the
+    // components it produced get stamped with the run's ordinal via Tag(). With no
+    // Filter wired both are near-free passthroughs. NOTHING is protected by rule
+    // (2026-09-03): titles, hints, the contents index, quest text, ledgers,
+    // captions and callouts all fox alike. The only texts kept clean are pure UI
+    // glyphs — the drop cap's single letter, checkbox marks, step bullets — where
+    // a stray combining mark reads as a render bug, not decay.
+
+    private static int runCounter;
+
+    /// <summary>One text run through the external lens: ordinal assigned, filter
+    /// applied unless this run is currently steadied under the reader's lens.</summary>
+    private static string Lens(string text, out int ordinal)
+    {
+        ordinal = runCounter++;
+        var f = TextLens.Filter;
+        if (f == null || string.IsNullOrEmpty(text) || TextLens.SteadyRuns.Contains(ordinal)) return text;
+        try { return f(text, unchecked(ordinal * 2654435761L)); } catch { return text; }
+    }
+
+    /// <summary>Stamp components [from..end) as belonging to a run, so the dialog's
+    /// lens hit-test can steady exactly the lines under the cursor.</summary>
+    private static void Tag(List<RichTextComponentBase> comps, int from, int ordinal)
+    {
+        if (TextLens.Filter == null) return;
+        for (int i = from; i < comps.Count; i++)
+            TextLens.RunOf.AddOrUpdate(comps[i], new System.Runtime.CompilerServices.StrongBox<int>(ordinal));
     }
 
     /// <summary>An indivisible run of components the paginator places as one unit.</summary>
@@ -137,7 +170,11 @@ public static class ChapterRenderer
             var title = new List<RichTextComponentBase>();
             string? secTitle = GuideLibrary.Localize(sec.Title);
             if (!string.IsNullOrEmpty(secTitle))
-                title.Add(new RichTextComponent(capi, SmallCaps(secTitle) + "\n", heading) { UnscaledMarginTop = HeadingTopMargin });
+            {
+                string tt = Lens(SmallCaps(secTitle!), out int titleOrd);
+                title.Add(new RichTextComponent(capi, tt + "\n", heading) { UnscaledMarginTop = HeadingTopMargin });
+                Tag(title, title.Count - 1, titleOrd);
+            }
 
             // Unrevealed section: the title stays (it advertises that there is
             // something to earn), the content gives way to a faint hint line.
@@ -145,12 +182,13 @@ public static class ChapterRenderer
             if (!string.IsNullOrEmpty(sec.RevealedBy)
                 && revealHost != null && !revealHost.IsRevealed(sec.RevealedBy!))
             {
-                string hintText = GuideLibrary.Localize(sec.Hint)
-                    ?? Lang.Get("almanacilluminated:guide-unrevealed");
+                string hintText = Lens(GuideLibrary.Localize(sec.Hint)
+                    ?? Lang.Get("almanacilluminated:guide-unrevealed"), out int hintOrd);
                 var hintFont = italic.Clone().WithColor(new[] { 0.38, 0.32, 0.25, 1.0 });
                 var hintAtom = new Atom { PageBreakBefore = sec.PageBreakBefore };
                 hintAtom.Comps.AddRange(title);
                 hintAtom.Comps.Add(new RichTextComponent(capi, hintText + "\n", hintFont));
+                Tag(hintAtom.Comps, hintAtom.Comps.Count - 1, hintOrd);
                 atoms.Add(hintAtom);
                 if (si < pack.Sections.Count - 1)
                     hintAtom.Comps.Add(new ClearFloatTextComponent(capi, SectionGap));
@@ -375,30 +413,42 @@ public static class ChapterRenderer
                 var grey = body.Clone().WithColor(new[] { 0.45, 0.40, 0.33, 1.0 });
                 foreach (var e in library.ModEntries(addedOnly: !all))
                 {
+                    string nm = Lens(e.Name, out int entryOrd);
+                    int entryStart = comps.Count;
                     if (e.Chapter != null)
-                        comps.AddRange(VtmlUtil.Richtextify(capi, $"  <a href=\"almanac://chapter/{e.Chapter.Id}\">{e.Name}</a>\n", body, onLink));
+                        comps.AddRange(VtmlUtil.Richtextify(capi, $"  <a href=\"almanac://chapter/{e.Chapter.Id}\">{nm}</a>\n", body, onLink));
                     else
-                        comps.Add(new RichTextComponent(capi, "  " + e.Name + "\n", grey));
+                        comps.Add(new RichTextComponent(capi, "  " + nm + "\n", grey));
+                    Tag(comps, entryStart, entryOrd);
                 }
                 break;
             }
 
             case "heading":
-                comps.Add(new RichTextComponent(capi, SmallCaps(block.Str("text") ?? "") + "\n",
+            {
+                string ht = Lens(SmallCaps(block.Str("text") ?? ""), out int headOrd);
+                comps.Add(new RichTextComponent(capi, ht + "\n",
                     CairoFont.WhiteSmallText().WithFont(FontRegistry.SerifDecorative).WithFontSize(21f)
                         .WithWeight(Cairo.FontWeight.Bold).WithColor(Ink))
                     { UnscaledMarginTop = HeadingTopMargin });
+                Tag(comps, comps.Count - 1, headOrd);
                 break;
+            }
 
             case "paragraph":
             {
                 string text = block.Str("text") ?? "";
                 if (block.Bool("dropcap") && text.Length > 0)
                 {
+                    // The drop cap's single letter stays clean: one giant capital
+                    // wearing a mark reads as a render bug, not foxing.
                     comps.Add(new RichTextComponent(capi, text.Substring(0, 1), dropCap) { Float = EnumFloat.Left, PaddingRight = 4 });
                     text = text.Substring(1);
                 }
+                text = Lens(text, out int paraOrd);
+                int paraStart = comps.Count;
                 comps.AddRange(VtmlUtil.Richtextify(capi, text + "\n", body, onLink));
+                Tag(comps, paraStart, paraOrd);
                 break;
             }
 
@@ -412,11 +462,15 @@ public static class ChapterRenderer
                 int n = 1;
                 foreach (var it in Arr(block, "items"))
                 {
+                    // The numeral/bullet glyph stays clean; the step's prose foxes.
                     if (ordered)
                         comps.Add(new StepNumberComponent(capi, n, accent));
                     else
                         comps.Add(new RichTextComponent(capi, "  • ", body));
-                    comps.AddRange(VtmlUtil.Richtextify(capi, it.ToString() + "\n", body, onLink));
+                    string st = Lens(it.ToString(), out int stepOrd);
+                    int stepStart = comps.Count;
+                    comps.AddRange(VtmlUtil.Richtextify(capi, st + "\n", body, onLink));
+                    Tag(comps, stepStart, stepOrd);
                     n++;
                 }
                 break;
@@ -443,9 +497,10 @@ public static class ChapterRenderer
                 // the line but reserved almost no height, so the box's bottom
                 // collided with the following heading).
                 comps.Add(new ClearFloatTextComponent(capi, (float)CalloutComponent.OuterMargin));
+                string calloutText = Lens(block.Str("text") ?? "", out int calloutOrd);
                 if (variant == "author")
                 {
-                    comps.Add(new AuthorCalloutComponent(capi, block.Str("text") ?? "", italic, authorInitial));
+                    comps.Add(new AuthorCalloutComponent(capi, calloutText, italic, authorInitial));
                 }
                 else
                 {
@@ -453,8 +508,9 @@ public static class ChapterRenderer
                     // box, padding the bottom a full line more than the top. The box's
                     // own Pad supplies even breathing room on every side.
                     var (fill, line) = CalloutColors(variant);
-                    comps.Add(new CalloutComponent(capi, block.Str("text") ?? "", italic, fill, line));
+                    comps.Add(new CalloutComponent(capi, calloutText, italic, fill, line));
                 }
+                Tag(comps, comps.Count - 1, calloutOrd);
                 comps.Add(new ClearFloatTextComponent(capi, (float)CalloutComponent.OuterMargin));
                 break;
             }
@@ -484,9 +540,13 @@ public static class ChapterRenderer
                     // SAME hollow box and the only difference left was the ink shade, which
                     // is what the reader reported not being able to see. Brackets and U+00D7
                     // are in the font, so the mark is now unmistakable on its own.
+                    // The checkbox mark stays clean (it is state, not prose); the
+                    // objective's text foxes with the rest of the page.
+                    string questText = Lens(it["text"]?.ToString() ?? "", out int questOrd);
                     comps.Add(new RichTextComponent(capi,
-                        "  " + (done ? "[×] " : "[ ] ") + (it["text"]?.ToString() ?? "") + "\n",
+                        "  " + (done ? "[×] " : "[ ] ") + questText + "\n",
                         done ? doneFont : italic));
+                    Tag(comps, comps.Count - 1, questOrd);
                 }
                 break;
             }
@@ -503,7 +563,12 @@ public static class ChapterRenderer
                 // to learn, not commentary on them. Setting them in the aside face told the
                 // eye to skim exactly the lines that matter most.
                 foreach (var it in Arr(block, "entries"))
-                    comps.AddRange(VtmlUtil.Richtextify(capi, "  " + it.ToString() + "\n", body, onLink));
+                {
+                    string entry = Lens(it.ToString(), out int ledgerOrd);
+                    int ledgerStart = comps.Count;
+                    comps.AddRange(VtmlUtil.Richtextify(capi, "  " + entry + "\n", body, onLink));
+                    Tag(comps, ledgerStart, ledgerOrd);
+                }
                 break;
 
             case "divider":
@@ -514,10 +579,12 @@ public static class ChapterRenderer
             case "link":
             {
                 string to = block.Str("to") ?? "";
-                string text = block.Str("text") ?? to;
+                string text = Lens(block.Str("text") ?? to, out int linkOrd);
                 var parts = VtmlUtil.Richtextify(capi, $"<a href=\"{to}\">{text}</a>\n", body, onLink);
                 if (parts.Length > 0) parts[0].UnscaledMarginTop = 8;   // clear the block above (often a callout)
+                int linkStart = comps.Count;
                 comps.AddRange(parts);
+                Tag(comps, linkStart, linkOrd);
                 break;
             }
 
@@ -537,8 +604,10 @@ public static class ChapterRenderer
                 string? caption = block.Str("caption");
                 if (!string.IsNullOrEmpty(caption))
                 {
+                    string ct = Lens(caption!, out int capOrd);
                     var capFont = italic.Clone().WithOrientation(EnumTextOrientation.Center);
-                    comps.Add(new RichTextComponent(capi, "\n" + caption + "\n", capFont));
+                    comps.Add(new RichTextComponent(capi, "\n" + ct + "\n", capFont));
+                    Tag(comps, comps.Count - 1, capOrd);
                 }
                 else
                 {
