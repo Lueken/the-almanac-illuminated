@@ -20,6 +20,7 @@ Outputs into resources/assets/almanacilluminated/fonts/.
 """
 import os
 from fontTools.ttLib import TTFont
+from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.pens.recordingPen import DecomposingRecordingPen
@@ -29,6 +30,20 @@ FONTDIR = os.path.join(GAMEDIR, "assets", "game", "fonts")
 OUTDIR = os.path.join(os.path.dirname(__file__), "..", "resources", "assets", "almanacilluminated", "fonts")
 
 MARKS = [0x031B, 0x0300, 0x0301, 0x0327, 0x0328, 0x0335, 0x0336, 0x0338, 0x0337]
+
+# Marks no game font carries, synthesized from each face's OWN spacing
+# diacritics so the squiggles come out in the serif's own voice. Each entry:
+# (codepoint, source glyph candidates, band). Bands are measured off grafted
+# reference marks: 'above' from gravecomb, 'below' from ogonek, 'overlay' from
+# the short stroke — so placement matches the marks that provably render.
+SYNTH = [
+    (0x0303, ["tilde", "asciitilde"], "above"),    # combining tilde
+    (0x0308, ["dieresis"], "above"),               # combining dieresis
+    (0x030A, ["ring", "degree"], "above"),         # combining ring
+    (0x0330, ["tilde", "asciitilde"], "below"),    # combining tilde below
+    (0x0324, ["dieresis"], "below"),               # combining dieresis below
+    (0x0334, ["tilde", "asciitilde"], "overlay"),  # combining tilde overlay (vanilla's own)
+]
 
 # (source face, donor face, out family, out file)
 BUILDS = [
@@ -74,6 +89,78 @@ def graft(src_path, donor_path, family, out_path):
         glyf.glyphs[gname] = glyph
         adv, lsb = dhmtx[dname]
         hmtx.metrics[gname] = (round(adv * scale), round(lsb * scale))
+        added.append(cp)
+
+    # The grafted glyphs must be in the glyph order before a glyph set can
+    # resolve them for the synthesis pass below.
+    target.setGlyphOrder(order)
+    if hasattr(glyf, "glyphOrder"):
+        glyf.glyphOrder = order
+
+    # ---- Synthesized heavy marks -------------------------------------------
+    # Vanilla's storm garble leans on marks (tilde overlays, stacked dots) that
+    # no game font carries at all. Build them from the target face's own
+    # spacing diacritics: decompose, scale into the band a grafted reference
+    # mark occupies, and center on the same negative-x overhang so they land
+    # over the PREVIOUS glyph exactly like the real combining marks do.
+    def bbox(glyph_name, glyphset):
+        bp = BoundsPen(glyphset)
+        glyphset[glyph_name].draw(bp)
+        return bp.bounds  # (xMin, yMin, xMax, yMax) or None
+
+    tset = target.getGlyphSet()
+    tcmap_best = target.getBestCmap()
+    bands = {}
+    for band, refcp in (("above", 0x0300), ("below", 0x0328), ("overlay", 0x0335)):
+        ref = "uni%04X" % refcp
+        if ref not in order:
+            continue
+        b = bbox(ref, tset)
+        if b:
+            bands[band] = b
+
+    for cp, sources, band in SYNTH:
+        gname = "uni%04X" % cp
+        if gname in order or band not in bands:
+            continue
+        src = None
+        for cand in sources:
+            # candidates by glyph name first, then by codepoint for the common ones
+            if cand in tset.keys():
+                src = cand
+                break
+        if src is None:
+            by_cp = {"tilde": 0x02DC, "asciitilde": 0x007E, "dieresis": 0x00A8, "ring": 0x02DA, "degree": 0x00B0}
+            for cand in sources:
+                g = tcmap_best.get(by_cp.get(cand, -1))
+                if g:
+                    src = g
+                    break
+        if src is None:
+            continue
+        sb = bbox(src, tset)
+        if not sb:
+            continue
+
+        rxMin, ryMin, rxMax, ryMax = bands[band]
+        sxMin, syMin, sxMax, syMax = sb
+        sh = max(1.0, syMax - syMin)
+        sw = max(1.0, sxMax - sxMin)
+        # Fit the band height; keep the squiggle from growing wider than a
+        # letter (1.3x the reference band width as the cap).
+        s = (ryMax - ryMin) / sh
+        s = min(s, 1.3 * max(1.0, rxMax - rxMin) / sw)
+        # Center-to-center transform into the band.
+        tx = (rxMin + rxMax) / 2 - ((sxMin + sxMax) / 2) * s
+        ty = (ryMin + ryMax) / 2 - ((syMin + syMax) / 2) * s
+
+        rec = DecomposingRecordingPen(tset)
+        tset[src].draw(rec)
+        pen = TTGlyphPen(None)
+        rec.replay(TransformPen(pen, (s, 0, 0, s, tx, ty)))
+        order.append(gname)
+        glyf.glyphs[gname] = pen.glyph()
+        hmtx.metrics[gname] = (0, round(sxMin * s + tx))
         added.append(cp)
 
     target.setGlyphOrder(order)
