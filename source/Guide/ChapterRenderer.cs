@@ -74,13 +74,14 @@ public static class ChapterRenderer
     private static int runCounter;
 
     /// <summary>One text run through the external lens: ordinal assigned, filter
-    /// applied unless this run is currently steadied under the reader's lens.</summary>
+    /// consulted ALWAYS — even for runs steadied under the reader's lens, because
+    /// the wirer owns what steadying can and cannot undo (a lacuna stays gone).</summary>
     private static string Lens(string text, out int ordinal)
     {
         ordinal = runCounter++;
         var f = TextLens.Filter;
-        if (f == null || string.IsNullOrEmpty(text) || TextLens.SteadyRuns.Contains(ordinal)) return text;
-        try { return f(text, unchecked(ordinal * 2654435761L)); } catch { return text; }
+        if (f == null || string.IsNullOrEmpty(text)) return text;
+        try { return f(text, unchecked(ordinal * 2654435761L), TextLens.SteadyRuns.Contains(ordinal)); } catch { return text; }
     }
 
     /// <summary>As <see cref="Lens"/>, but through the PLAIN filter, for runs whose
@@ -90,8 +91,8 @@ public static class ChapterRenderer
     {
         ordinal = runCounter++;
         var f = TextLens.PlainFilter;
-        if (f == null || string.IsNullOrEmpty(text) || TextLens.SteadyRuns.Contains(ordinal)) return text;
-        try { return f(text, unchecked(ordinal * 2654435761L)); } catch { return text; }
+        if (f == null || string.IsNullOrEmpty(text)) return text;
+        try { return f(text, unchecked(ordinal * 2654435761L), TextLens.SteadyRuns.Contains(ordinal)); } catch { return text; }
     }
 
     /// <summary>Stamp components [from..end) as belonging to a run, so the dialog's

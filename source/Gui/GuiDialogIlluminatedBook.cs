@@ -400,6 +400,9 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     public override void OnGuiOpened()
     {
         base.OnGuiOpened();
+        // Each sitting is its own reading: a lens wirer whose deepest tier makes
+        // the page differ between sittings keys off this. Costless otherwise.
+        TextLens.OpenSalt++;
         // Adopt the current light directly on open, instead of gliding over from
         // whatever the light was when the book was last closed.
         LightSampler?.ResetSmoothing();
@@ -476,12 +479,25 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
 
         if (TextLens.Generation != lastLensGen)
         {
+            bool firstSync = lastLensGen == 0;
             lastLensGen = TextLens.Generation;
             // Clear, never null: a null cache re-paginates the whole library on the
             // next compose (the warm pass); a cleared one re-renders per chapter,
             // lazily, as each is visited under the new state.
             cache?.Clear();
-            if (IsOpened()) ComposeSpread();
+            if (IsOpened())
+            {
+                ComposeSpread();
+                // The eggshell moment (Amnesia's lesson): a state change subtle on
+                // the page needs a distinct audible cue, or it goes unfelt. Something
+                // is writing. Skipped on the first sync after construction, which is
+                // bookkeeping, not an event.
+                if (!firstSync)
+                {
+                    capi.World.PlaySoundAt(new AssetLocation("game:sounds/effect/writing"),
+                        capi.World.Player.Entity, null, true, 8, 0.7f);
+                }
+            }
         }
 
         // Only chapters compose through the filter today, so only a chapter spread

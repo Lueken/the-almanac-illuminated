@@ -27,14 +27,25 @@ namespace AlmanacIlluminated;
 /// </summary>
 public static class TextLens
 {
-    /// <summary>The transform: (vtmlText, seed) -> vtmlText. Null = no lens, zero cost.</summary>
-    public static Func<string, long, string>? Filter;
+    /// <summary>The transform: (vtmlText, seed, steadied) -> vtmlText. Null = no
+    /// lens, zero cost. The bool is whether this run sits under the reader's held
+    /// lens right now — the WIRER owns what steadying means per damage kind (its
+    /// ruled law: perceptual noise clears, inked-over words reveal, and a lacuna
+    /// stays a lacuna — a hole is not a covering, so the filter is consulted even
+    /// for steadied runs).</summary>
+    public static Func<string, long, bool, string>? Filter;
 
     /// <summary>The plain-text sibling of <see cref="Filter"/>, for runs whose
     /// renderer takes plain text and never parses VTML (the callout boxes draw
     /// their own prose). CONTRACT: plain text in, plain text out — any markup in
     /// the output would print literally on the page.</summary>
-    public static Func<string, long, string>? PlainFilter;
+    public static Func<string, long, bool, string>? PlainFilter;
+
+    /// <summary>Bumped once per book OPEN (not per compose). A wirer whose
+    /// deepest reader-axis tier makes the page read differently each sitting
+    /// mixes this into its seeds; everything else ignores it, so the book stays
+    /// deterministic within one reading.</summary>
+    public static int OpenSalt;
 
     /// <summary>Answers "is the reader's steadying lens in hand right now" — the
     /// wirer's notion of a lens (an item on the cursor, a worn trinket, whatever).
