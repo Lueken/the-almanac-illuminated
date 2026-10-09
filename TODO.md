@@ -42,3 +42,33 @@ Status of the build. The format spec is at `docs/SCHEMA.md` and is open for comm
 - **Eyesome Script font.** Held out of the repo until its license is confirmed. Re-add the file and the FontRegistry entry once cleared.
 - **Legacy `almanaccodexilluminated`.** Retire its Alt+J binding when this supersedes it.
 - **Non-Windows font registration.** Current custom-font path is Windows only (GDI). Add a fontconfig branch if needed.
+
+## Chapter tab labels: two findings from the 2026-10-08 "E" tab look (LGD-93)
+
+Pun's "a tab on the right shows only an E, should be Engineering" was investigated and NOT
+fixed. Two things were established and are worth not rediscovering:
+
+1. **Nothing in this mod truncates a title to one character.** Grepped: no `Substring(0, 1)`
+   outside the drop-cap, no single-letter label construction anywhere. `IsNamed(i) =>
+   labels[i].Length > 1` means a one-character label is deliberately drawn as a narrow
+   letter-slip thumb-index instead of a bookmark, and the physical view has the same test
+   (`PhysicalBookView` :1337). So the label arrives as the literal string "E" from whatever
+   supplies the tab list; the fitter never runs on it. Jeffrey's read is that it comes from
+   pack content that differs between The Quire and a bare test world. Start there, not in
+   the renderer.
+
+2. **Two-line tab labels are unreachable, so `SplitTwo`'s wrap branch is dead code.**
+   `GuiElementChapterTabs.Fits` requires `fontHeight * 2 <= usableH`, and `usableH` is
+   `UnTabH = 27` unscaled. Even at the 11pt `LabelFloorSize` two lines come to roughly 26-28,
+   so the wrap never passes and every ribbon is effectively one line: width is the only lever
+   before the ellipsis. "The Turned Earth" fits on one line by width, which is why this has
+   never shown. Anything that wants real two-line labels has to raise `UnTabH` first.
+
+A hyphen-break fallback for spaceless names was written and then reverted on 2026-10-08,
+because finding (2) makes it inert and finding (1) means it was aimed at the wrong thing.
+It is in that session's history if the tab height ever grows.
+
+**NOTE ALSO:** the physical book reimplements label fitting in its own units
+(`PhysicalBookView.FitSideTabLabel` / `ClipToAspect` / its own `SplitTwo` :436, with the
+constants mirrored by hand at :362). Any change to flat-ribbon label fitting has to be made
+twice or it will not show in the presentation most people read in.
