@@ -1,4 +1,4 @@
-# Patch notes
+﻿# Patch notes
 
 The Almanac: Illuminated.
 
@@ -7,7 +7,56 @@ starts at 0.3.0 and carries forward from now on.
 
 ---
 
-## 0.3.0 (in development)
+## 0.3.2
+
+One new extension seam, for the Almanac suite's first page that asks the reader to decide
+something rather than read something.
+
+**`DecisionPanelComponent`** — a rubricated panel with the author's-hand frame and wax seal, a
+heading, the body of a consequence, and the choices drawn inside the same box.
+
+It is one component rather than a frame placed around several, and that is forced by the rich
+text model rather than chosen: a component may only narrow its OWN flow path, which is exactly how
+`CalloutComponent` works. There is no way for a frame to indent separate `BookLinkComponent`s that
+follow it, so a box drawn around loose links either clips at the column edge or has its own border
+run through its text. The actions therefore belong to the panel; their rectangles are computed
+where they are drawn and hit-tested in the space `GuiElementRichtext` hands to `OnMouseDown`.
+
+Carries the same margin contract as `CalloutComponent`: the caller reserves `OuterMarginTop` above
+and the instance's `ReserveBelow` underneath, because the box is drawn past the text bounds. The
+bottom reservation is per-instance because a panel with no choices has no choice row to leave room
+for, and reserving one anyway leaves a visible empty band inside the box.
+
+Built for TCM's Great Work declaration, which is the one irreversible choice in the Almanac and
+first shipped reading as one more underlined link on a page full of them.
+
+**`AlmanacTcm` 0.6.0 and this release are a pair.** `DecisionPanelComponent` does not exist in
+0.3.1, and TCM 0.6.0 raises its runtime floor to 0.3.2 so a mismatched install is refused at boot
+with a readable message rather than dying when the Callings tab is first opened.
+
+---
+
+## 0.3.1
+
+A crash fix, reported from the field on the day it is fixed.
+
+In singleplayer an open book pauses the game, and the game's scheduler refuses new
+timers while paused for anyone running with developer mode and extended debug info
+switched on. Four places in the mod set timers from inside that pause:
+
+- **Opening the Journal tab crashed those players outright.** Composing the journal
+  page re-set the text box, the text box reported a change as though someone had
+  typed, and the auto-save timer that followed went to the paused scheduler. A
+  recompose no longer counts as an edit, and the auto-save timer is now permitted
+  while paused, which is when all journal writing happens anyway. For everyone
+  else the old behaviour was quieter but still wrong: a journal edit made in
+  singleplayer waited for the unpause to reach disk.
+
+- Closing the book, losing the page capture, and the dev preview watcher each
+  deferred work through the same scheduler and could be caught the same way. All
+  three are now permitted while paused.
+
+## 0.3.0
 
 The Crops chapter, which was the one part of the book still showing a reader less than the
 game already knew. Ships alongside TCM 0.5.0; TCM gates on `MinIlluminatedVersion`, so the

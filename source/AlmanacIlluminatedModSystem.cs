@@ -738,7 +738,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         {
             if (wasOpen) bookDialog?.TryClose();
             capi.ShowChatMessage(CaptureLostLine);
-        }, 0);
+        }, 0, permittedWhilePaused: true);
     }
 
     private void LoadSettings()
@@ -1238,7 +1238,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         {
             if (token != System.Threading.Interlocked.Read(ref previewReloadToken)) return;   // superseded by a later event
             if (previewLoc != null) ReloadPreview(announce: false);
-        }, 250);
+        }, 250, permittedWhilePaused: true);
     }
 
     /// <summary>

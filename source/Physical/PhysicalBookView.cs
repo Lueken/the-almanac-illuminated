@@ -1590,7 +1590,7 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
                 closing = false;
                 StowComplete = true;   // lets the dialog's stow guard pass this one through
                 var dlg = liveDialog;
-                capi.Event.RegisterCallback(_ => dlg?.TryClose(), 0);
+                capi.Event.RegisterCallback(_ => dlg?.TryClose(), 0, permittedWhilePaused: true);
             }
         }
         else if (!StowComplete)
