@@ -1,4 +1,4 @@
-using Newtonsoft.Json.Linq;
+﻿using Newtonsoft.Json.Linq;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
@@ -62,46 +62,35 @@ public static class ChapterRenderer
         return Paginate(capi, atoms, pageWidth, pageHeight);
     }
 
-    // ---- THE SPOTTED PAGE (TextLens seam) --------------------------------------
-    // Every text run passes through Lens() on its way to components, and the
-    // components it produced get stamped with the run's ordinal via Tag(). With no
-    // Filter wired both are near-free passthroughs. NOTHING is protected by rule
-    // (2026-09-03): titles, hints, the contents index, quest text, ledgers,
-    // captions and callouts all fox alike. The only texts kept clean are pure UI
-    // glyphs — the drop cap's single letter, checkbox marks, step bullets — where
-    // a stray combining mark reads as a render bug, not decay.
+    // ---- Run ordinals (the Spotted Page's renderer half) -----------------------
+    // WITHDRAWN 0.3.3. The TextLens seam these fed was removed; see PATCHNOTES.
+    // The three helpers stay as passthroughs because every text run in the book
+    // calls them, and gutting those call sites to delete three no-ops would be a
+    // large diff over the whole renderer for no behavioural gain. They cost an
+    // integer increment per run. Restoring the seam means restoring TextLens.cs
+    // and the bodies here, and nothing else in this file moves.
 
     private static int runCounter;
 
-    /// <summary>One text run through the external lens: ordinal assigned, filter
-    /// consulted ALWAYS — even for runs steadied under the reader's lens, because
-    /// the wirer owns what steadying can and cannot undo (a lacuna stays gone).</summary>
+    /// <summary>Assign this text run its ordinal. Passthrough while no lens exists.</summary>
     private static string Lens(string text, out int ordinal)
     {
         ordinal = runCounter++;
-        var f = TextLens.Filter;
-        if (f == null || string.IsNullOrEmpty(text)) return text;
-        try { return f(text, unchecked(ordinal * 2654435761L), TextLens.SteadyRuns.Contains(ordinal)); } catch { return text; }
+        return text;
     }
 
-    /// <summary>As <see cref="Lens"/>, but through the PLAIN filter, for runs whose
-    /// component renders text verbatim (callout boxes) — markup from the rich
-    /// filter would print literally there.</summary>
+    /// <summary>As <see cref="Lens"/>, for runs whose component renders text verbatim
+    /// (callout boxes). Passthrough while no lens exists.</summary>
     private static string LensPlain(string text, out int ordinal)
     {
         ordinal = runCounter++;
-        var f = TextLens.PlainFilter;
-        if (f == null || string.IsNullOrEmpty(text)) return text;
-        try { return f(text, unchecked(ordinal * 2654435761L), TextLens.SteadyRuns.Contains(ordinal)); } catch { return text; }
+        return text;
     }
 
-    /// <summary>Stamp components [from..end) as belonging to a run, so the dialog's
-    /// lens hit-test can steady exactly the lines under the cursor.</summary>
+    /// <summary>Stamped components [from..end) as belonging to a run. No-op while no
+    /// lens exists: nothing hit-tests run ordinals.</summary>
     private static void Tag(List<RichTextComponentBase> comps, int from, int ordinal)
     {
-        if (TextLens.Filter == null && TextLens.PlainFilter == null) return;
-        for (int i = from; i < comps.Count; i++)
-            TextLens.RunOf.AddOrUpdate(comps[i], new System.Runtime.CompilerServices.StrongBox<int>(ordinal));
     }
 
     /// <summary>An indivisible run of components the paginator places as one unit.</summary>

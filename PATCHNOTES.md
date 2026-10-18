@@ -7,6 +7,32 @@ starts at 0.3.0 and carries forward from now on.
 
 ---
 
+## 0.3.3
+
+**The Spotted Page is withdrawn. It should never have shipped.**
+
+0.3.2 was cut to carry one new UI component for TCM's Great Work panel, and it took the whole
+working tree with it, including five commits of unreleased work on `TextLens`, the seam an external
+mod uses to lay a corruption filter over the book's text.
+
+That seam is not inert when a wirer is present. The Marginalia: Conjunction already ships
+`SpottedPageBridge`, which looks for `AlmanacIlluminated.TextLens` by reflection. Against 0.3.1 the
+type did not exist, so the bridge logged "book text stays clean" and did nothing. Against 0.3.2 it
+wired, and the book began re-inking its whole spread whenever the corruption state moved, which
+readers saw as a flash on page turns. A player reported it within hours.
+
+`TextLens` is gone, so the bridge is back to finding nothing and the book is clean again. The
+renderer keeps three passthrough helpers that every text run calls; emptying those call sites to
+delete three no-ops would be a large diff across the whole renderer for no behavioural gain. The
+mark-capable serif faces stay too, because they render identically with no marks asked for.
+
+Restoring the feature means restoring `TextLens.cs` and the two bodies it drove. Nothing else moved.
+
+**AlmanacTcm 0.6.0 is rebuilt against this and re-pinned.** The pair is now TCM 0.6.0 with
+Illuminated 0.3.3.
+
+---
+
 ## 0.3.2
 
 One new extension seam, for the Almanac suite's first page that asks the reader to decide

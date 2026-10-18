@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using Vintagestory.API.Client;
@@ -34,8 +34,9 @@ public static class FontRegistry
     // renamed per the license's Reserved Font Name rule). When all seven faces
     // register, the book swaps to them: pixel-identical rendering until a
     // combining mark is actually asked for. Where registration is unavailable
-    // the game families stay and TextLens.MarksCapable stays false, so a lens
-    // wirer can pick a markless vocabulary instead.
+    // the game families stay. The faces are kept through the 0.3.3 withdrawal of
+    // the lens that motivated them: they render identically either way, and
+    // ripping them back out would churn every page for no visible difference.
     public static string SerifBody => foxCapable ? "Illuminated Serif" : "Lora";
     public static string SerifDecorative => foxCapable ? "Illuminated Decorative" : "Almendra";
     private static bool foxCapable;
@@ -121,7 +122,6 @@ public static class FontRegistry
         int foxed = 0;
         foreach (var file in FoxedFontFiles) foxed += RegisterOne(file);
         foxCapable = foxed == FoxedFontFiles.Length;
-        TextLens.MarksCapable = foxCapable;
 
         IlluminatedLogger.Info(capi, "fonts",
             $"Registered {ok}/{FontFiles.Length} font files — families: '{Script}', '{Sans}', '{DisplaySans}'; "

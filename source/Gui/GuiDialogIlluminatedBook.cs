@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -400,9 +400,6 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     public override void OnGuiOpened()
     {
         base.OnGuiOpened();
-        // Each sitting is its own reading: a lens wirer whose deepest tier makes
-        // the page differ between sittings keys off this. Costless otherwise.
-        TextLens.OpenSalt++;
         // Adopt the current light directly on open, instead of gliding over from
         // whatever the light was when the book was last closed.
         LightSampler?.ResetSmoothing();
@@ -459,115 +456,12 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         {
             ComposeSpread();
         }
-        UpdateLens();
     }
 
-    // ---- THE SPOTTED PAGE: the external lens over the book's text --------------
-    // The seam (TextLens) carries a text transform some other mod wired; this is
-    // the spatial half the book owns. Two jobs, both cheap when nothing changed:
-    // notice a Generation bump (the transform's ambient state moved) and drop the
-    // pagination cache, and while the reader's lens is held, steady exactly the
-    // runs under a small window at the cursor. Zero-width marks mean a steadied
-    // recompose swaps ink in place with no reflow, which is what sells the effect.
-
-    private int lastLensGen;
-    private GuidePack? lensChapter;
-
-    private void UpdateLens()
-    {
-        if (TextLens.Filter == null && TextLens.PlainFilter == null) return;
-
-        if (TextLens.Generation != lastLensGen)
-        {
-            bool firstSync = lastLensGen == 0;
-            lastLensGen = TextLens.Generation;
-            // Clear, never null: a null cache re-paginates the whole library on the
-            // next compose (the warm pass); a cleared one re-renders per chapter,
-            // lazily, as each is visited under the new state.
-            cache?.Clear();
-            if (IsOpened())
-            {
-                ComposeSpread();
-                // The eggshell moment (Amnesia's lesson): a state change subtle on
-                // the page needs a distinct audible cue, or it goes unfelt. Something
-                // is writing. Skipped on the first sync after construction, which is
-                // bookkeeping, not an event.
-                if (!firstSync)
-                {
-                    capi.World.PlaySoundAt(new AssetLocation("game:sounds/effect/writing"),
-                        capi.World.Player.Entity, null, true, 8, 0.7f);
-                }
-            }
-        }
-
-        // Only chapters compose through the filter today, so only a chapter spread
-        // hit-tests. (Crops/weather/external columns are unlensed for now.)
-        bool chapterShowing = IsOpened() && current != null && pages != null
-            && !journalMode && !cropsMode && !weatherMode && externalTab == null;
-        bool held = chapterShowing && TextLens.LensHeld?.Invoke() == true;
-
-        if (!held)
-        {
-            if (TextLens.SteadyRuns.Count > 0)
-            {
-                // The lens came away: the steadied window spots back over.
-                TextLens.SteadyRuns.Clear();
-                if (current != null) cache?.Remove(current);
-                if (IsOpened()) ComposeSpread();
-            }
-            lensChapter = null;
-            return;
-        }
-
-        // Ordinals restart per chapter; a steady set carried across a chapter
-        // switch would steady arbitrary runs of the new one.
-        if (lensChapter != current)
-        {
-            TextLens.SteadyRuns.Clear();
-            lensChapter = current;
-        }
-
-        var want = new HashSet<int>();
-        if (PhysicalMirror != null
-            && PhysicalMirror.TryRemap(capi.Input.MouseX, capi.Input.MouseY, out int rx, out int ry))
-        {
-            double radius = GuiElement.scaled(TextLens.LensRadius);
-            CollectLensRuns(want, "leftpage", rx, ry, radius);
-            CollectLensRuns(want, "rightpage", rx, ry, radius);
-        }
-
-        if (!want.SetEquals(TextLens.SteadyRuns))
-        {
-            TextLens.SteadyRuns.Clear();
-            foreach (int o in want) TextLens.SteadyRuns.Add(o);
-            cache?.Remove(current!);
-            ComposeSpread();
-        }
-    }
-
-    /// <summary>Collect the run ordinals whose laid-out lines fall within the lens
-    /// circle. Component line bounds are relative to the richtext element, so the
-    /// element's absolute origin offsets them into the same space as the remapped
-    /// cursor.</summary>
-    private void CollectLensRuns(HashSet<int> into, string key, double mx, double my, double radius)
-    {
-        var rt = SingleComposer?.GetRichtext(key);
-        if (rt?.Components == null) return;
-        double ox = rt.Bounds.absX, oy = rt.Bounds.absY;
-        foreach (var comp in rt.Components)
-        {
-            if (comp?.BoundsPerLine == null) continue;
-            if (!TextLens.RunOf.TryGetValue(comp, out var box)) continue;
-            foreach (var lb in comp.BoundsPerLine)
-            {
-                // Nearest point on the line's rect to the cursor, against the radius.
-                double cx = System.Math.Clamp(mx, ox + lb.X, ox + lb.X + lb.Width);
-                double cy = System.Math.Clamp(my, oy + lb.Y, oy + lb.Y + lb.Height);
-                double dx = mx - cx, dy = my - cy;
-                if (dx * dx + dy * dy <= radius * radius) { into.Add(box.Value); break; }
-            }
-        }
-    }
+    // THE SPOTTED PAGE was WITHDRAWN in 0.3.3. Its spatial half lived here: a
+    // Generation watch that dropped the pagination cache and re-inked the spread,
+    // and a hit-test that steadied the runs under the reader's held lens. It is
+    // gone with the TextLens seam it drove; see PATCHNOTES for why.
 
     /// <summary>
     /// Tell the admin, in chat, when more than one chapter claims the overview slot.
