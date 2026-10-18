@@ -28,8 +28,11 @@ mark-capable serif faces stay too, because they render identically with no marks
 
 Restoring the feature means restoring `TextLens.cs` and the two bodies it drove. Nothing else moved.
 
-**AlmanacTcm 0.6.0 is rebuilt against this and re-pinned.** The pair is now TCM 0.6.0 with
-Illuminated 0.3.3.
+**AlmanacTcm 0.6.0 is unchanged and needs no rebuild.** Its load floor is 0.3.2 and 0.3.3 clears
+it, and it references nothing this release removed: `DecisionPanelComponent`, `BookLinkComponent`
+and the serif families are all still here. Re-cutting a TCM that was already published would have
+meant two different builds both called 0.6.0, which is the exact fault that made the 0.5.16 crash
+invisible. Drop 0.3.3 in beside it.
 
 ---
 
