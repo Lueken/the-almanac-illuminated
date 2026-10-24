@@ -113,6 +113,12 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         {
             base.OnMouseMove(new MouseEvent(rx, ry, args.DeltaX, args.DeltaY));
         }
+        else
+        {
+            // Off the page no move is dispatched, so a corner lift would stay up
+            // until the cursor happened to cross the page again.
+            corners?.ClearHover();
+        }
         args.Handled = true;
     }
 
@@ -564,6 +570,11 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
     /// <summary>The pin whose page is open right now, or -1 — its scrap lies
     /// ON the spread; all others read as tucked under it.</summary>
     public int FocusedPinIndex => CurrentPinIndex();
+
+    /// <summary>The page corner under the cursor that could actually turn: -1 left,
+    /// +1 right, 0 none. The view lifts that corner off the page, which is the only
+    /// thing telling a reader the corner is clickable at all.</summary>
+    public int HoveredCorner => corners?.HoveredCorner ?? 0;
 
     // --- Physical side tabs -----------------------------------------------
     // Published by ComposeSpread in physical mode; the view draws them as
@@ -1092,7 +1103,12 @@ public class GuiDialogIlluminatedBook : GuiDialog, IAlmanacBookTabHost
         ElementBounds? addBtn = journalMode ? Slot() : null;
 
         // The page-turn overlay covers the whole book; it acts only in the corners.
-        ElementBounds cornerBounds = ElementBounds.Fixed(bookX, 0, bookW, bookH);
+        // Height is dialogH, not bookH: the parchment is painted across the whole dialog
+        // rect (DrawPhysicalPages fills bgBounds) and the quad textures that rect edge to
+        // edge, so the btnRow strip at the bottom is visible page, not off-page chrome.
+        // The folio number lives down there. Sizing this to bookH left that strip dead to
+        // the mouse, which is why players aiming at the bottom of the page hit nothing.
+        ElementBounds cornerBounds = ElementBounds.Fixed(bookX, 0, bookW, dialogH);
 
         // Tab strips hang off both edges. Left: Contents, Journal, then the letters
         // already passed. Right: the current letter and the ones still ahead.

@@ -7,6 +7,50 @@ starts at 0.3.0 and carries forward from now on.
 
 ---
 
+## 0.3.4
+
+**The page-turn corner was not where the page was.**
+
+Reported on The Quire on 2026-10-24 by four players inside ten minutes. Silas clicked around the
+bottom of the page and on the folio number and got nothing, and said the live spot sat "crazy
+high." Chanka and Pun found it, but only by accident. GamerGoblin and Vinni_Pukh asked for an
+icon. My first answer in the thread was that the book is a book and a page turn is a page turn,
+and that there was already a turn icon. Both halves of that were wrong, and the code says so.
+
+`cornerBounds` was built from the book *plate* rect — `(bookX, 0, bookW, bookH)`. The parchment
+the reader sees is painted across the whole *dialog* rect: `DrawPhysicalPages` fills `bgBounds`,
+and `PhysicalBookView` textures that capture onto the page quad edge to edge, un-inset and
+un-letterboxed. `dialogH` is `bookH + btnRow`, so a 38-unit strip of fully visible page along the
+bottom was dead to the mouse. The folio number is drawn at `dialogH - 12`, which is **26 units
+below the bottom of the clickable region** — the one mark that says "this is the bottom of the
+page" sat outside the only control on it. At a small window or a high GUI scale the dead strip is
+proportionally larger, and the camera tilt magnifies exactly that part of the page.
+
+The corner region is now the painted paper. Clicking the folio number turns the page, which is
+the test the report deserved.
+
+It also takes an absolute floor of 48 units on each corner band. The 22% fraction shrinks with
+the plate, and the plate is smallest precisely where a player is least able to aim.
+
+**The live corner lifts under the cursor.**
+
+There is no page-turn icon in this mod and there never was; the class comment claimed Prev/Next
+buttons that do not exist either. The corner click is the only page-turn input in the book — no
+buttons, no hotkey, no wheel — and nothing announced it. "It is a physical book" is a fair
+argument for not bolting an arrow onto the page, and no argument at all for an invisible control:
+a real book's loose corner is something you can see.
+
+So the corner you can actually turn now curls off the page while the cursor is on it, and settles
+when it leaves. It reuses the sheet the turn already builds, at zero swing and a small curl
+biased to the foot of the page, drawn over the flat spread rather than instead of it. No icon, no
+text, no permanent chrome. `BuildBentSheet` takes a `lowBias` argument that defaults to zero, so
+the turn animation is byte-for-byte the curve it always was.
+
+Feel is tunable in place: `.almbook hover <n>` for the lift, `.almbook hoverease <n>` for the
+settle, `hover 0` to switch the cue off entirely. Both save like every other knob.
+
+---
+
 ## 0.3.3
 
 **The Spotted Page is withdrawn. It should never have shipped.**

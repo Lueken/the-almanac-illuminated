@@ -134,6 +134,15 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     private readonly int[] stripStart = new int[1];
     private readonly int[] stripSize = new int[1];
     private bool turning, turnForward;
+
+    // Hover lift. The corner click is the book's only page-turn input — no buttons, no
+    // hotkey, no wheel — and until 0.3.4 nothing announced it, so players hunted for it
+    // or never found it at all. The live corner now lifts under the cursor the way a
+    // loose page does. Both knobs are live via .almbook hover.
+    public float HoverLift = 0.30f;         // curl at full hover
+    public float HoverSeconds = 0.12f;      // settle time, either direction
+    private int hoverCorner;                // -1 left, +1 right, 0 none
+    private float hoverT;                   // 0..1, eased
     private float turnT;
     private const float TurnSeconds = 0.42f;
 
@@ -800,7 +809,7 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     /// </summary>
     private int BuildBentSheet(float turnAngle, float curl, float pageHalfW, int dir,
                                float uSpine, float uOuterFront, float uOuterBack,
-                               float vTop, float vBot)
+                               float vTop, float vBot, float lowBias = 0f)
     {
         var mesh = sheetStrip!;
         float stiff = Math.Max(0.2f, BendStiff);
@@ -814,7 +823,13 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
         for (int r = 0; r < TurnRows; r++)
         {
             float y = TurnRows == 1 ? 0f : -1f + 2f * r / (TurnRows - 1);
-            float k = curl * (1f + BendCorner * y * y);
+            // Rows run y = -1 at the foot of the page to y = +1 at the head. The swing
+            // weights both free corners alike; the hover lift wants only the bottom one,
+            // because that is the corner the cursor is on. lowBias blends between them,
+            // and at 0 this is exactly the symmetric curve the turn has always used.
+            float sym = 1f + BendCorner * y * y;
+            float low = (1f - y) * (1f - y) * 0.25f;     // 1 at the foot, 0 at the head
+            float k = curl * (sym + lowBias * (low - sym));
             float x = 0f, z = 0f;
             int b0 = r * (TurnSegments + 1);
             px[b0] = 0f; pz[b0] = 0f;
@@ -923,6 +938,7 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     public string Describe() =>
         $"tilt {TiltDeg:0.#}°, yaw {YawDeg:0.#}°, dist {Dist:0.##}, scale {Scale:0.##}, fov {FovDeg:0.#}°, height {HeightOff:0.##}, " +
         $"bend {BendMax:0.##}, stiff {BendStiff:0.##}, lead {BendLead:0.##}, corner {BendCorner:0.##}, " +
+        $"hover {HoverLift:0.##}, hoverease {HoverSeconds:0.###}, " +
         $"flipslow {FlipSlow:0.###}, flipfast {FlipFast:0.###}, flipcurl {FlipCurl:0.##}, " +
         $"flipscale {FlipScale:0.##}, flipmax {FlipMax}, flippaper {(FlipPaper ? 1 : 0)}" +
         (GuiDialogIlluminatedBook.FlipThroughParked
@@ -933,6 +949,7 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     {
         TiltDeg = 12f; YawDeg = 0f; Dist = 1.0f; Scale = 0.37f; FovDeg = 50f; HeightOff = 0.06f;
         BendMax = 1.5f; BendStiff = 0.7f; BendLead = 0.6f; BendCorner = 0.05f;
+        HoverLift = 0.30f; HoverSeconds = 0.12f;
         FlipSlow = 0.13f; FlipFast = 0.06f; FlipCurl = 1.35f;
         FlipScale = 0.6f; FlipMax = 7; FlipPaper = false;
     }
@@ -1443,6 +1460,7 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
 
             if (turning && snapColorTexId != 0 && sheetStripRef != null)
             {
+                hoverCorner = 0; hoverT = 0f;    // the lift hands off to the swing
                 turnT = Math.Min(1f, turnT + deltaTime / Math.Max(0.01f, turnSeconds));
                 bool intermediate = flipsLeft > 0;
 
@@ -1515,6 +1533,7 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
                 turning = false;
                 DrawMesh(quadLeftRef, fboColorTexId, mvQuadLeft, normalShaded: 0);
                 DrawMesh(quadRightRef, fboColorTexId, mvQuadRight, normalShaded: 0);
+                DrawHoverCurl(deltaTime, u0, u1, uMid, vTop, vBot);
             }
         }
 
@@ -1536,6 +1555,49 @@ public class PhysicalBookView : IRenderer, IPhysicalMirror
     {
         float shade = 1f - 0.16f * MathF.Sin(GameMath.Clamp(phi, 0f, MathF.PI));
         return new Vec4f(shade, shade, shade, 1f);
+    }
+
+    /// <summary>
+    /// The corner the cursor is on, lifted off the page. Drawn over the flat spread rather
+    /// than instead of it, so the paper beneath shows through the gap the way it would in a
+    /// real book; depth testing is off in <see cref="DrawStrip"/>, so draw order alone
+    /// decides what covers what.
+    ///
+    /// The sheet is the same geometry the turn uses, at turnAngle zero and a small curl
+    /// biased to the foot of the page. A turn and a lift cannot run together: the turning
+    /// branch zeroes this first.
+    /// </summary>
+    private void DrawHoverCurl(float deltaTime, float u0, float u1, float uMid, float vTop, float vBot)
+    {
+        int want = liveDialog?.HoveredCorner ?? 0;
+
+        // Settle to nothing before switching sides, so moving across the foot of the book
+        // reads as one corner dropping and the other rising, not as a jump.
+        if (want != hoverCorner)
+        {
+            hoverT -= deltaTime / Math.Max(0.01f, HoverSeconds);
+            if (hoverT <= 0f) { hoverT = 0f; hoverCorner = want; }
+        }
+        else if (hoverCorner != 0)
+        {
+            hoverT = Math.Min(1f, hoverT + deltaTime / Math.Max(0.01f, HoverSeconds));
+        }
+
+        if (hoverCorner == 0 || hoverT <= 0f || sheetStripRef == null) return;
+
+        float curl = HoverLift * EaseOutCubic(hoverT);
+        bool right = hoverCorner > 0;
+        float uOuter = right ? u1 : u0;
+        // Geometry carries the aspect itself, exactly as in the turn.
+        float pageHalfW = cropW / cropH;
+        BuildBentSheet(0f, curl, pageHalfW, right ? 1 : -1,
+                       uSpine: uMid,
+                       uOuterFront: uOuter,
+                       uOuterBack: uOuter,   // nothing passes vertical at this curl
+                       vTop, vBot, lowBias: 1f);
+
+        stripStart[0] = 0; stripSize[0] = StripQuads * 6;
+        DrawStrip(fboColorTexId, SheetShade(curl * 0.5f));
     }
 
     /// <summary>

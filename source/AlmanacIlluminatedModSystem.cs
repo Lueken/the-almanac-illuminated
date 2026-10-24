@@ -1,4 +1,4 @@
-using Vintagestory.API.Client;
+﻿using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Server;
@@ -487,7 +487,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         api.Event.RegisterRenderer(physicalView, EnumRenderStage.Ortho, "almanacilluminated-bookview");
 
         api.ChatCommands.Create("almbook")
-            .WithDescription("Almanac presentation. No args: report. Args: pause [on|off] (singleplayer reading pause), light [on|off|floor <n>] (read by the world's light), or a physical-book knob: framing (tilt|yaw|dist|scale|fov|height <n>), page bend (bend|stiff|lead|corner <n>), leafing-through (flipslow|flipfast|flipcurl|flipscale|flipmax <n>, flippaper <0|1>), model <0|1>, reset. Knobs save as you set them.")
+            .WithDescription("Almanac presentation. No args: report. Args: pause [on|off] (singleplayer reading pause), light [on|off|floor <n>] (read by the world's light), or a physical-book knob: framing (tilt|yaw|dist|scale|fov|height <n>), page bend (bend|stiff|lead|corner <n>), the corner hover lift (hover|hoverease <n>), leafing-through (flipslow|flipfast|flipcurl|flipscale|flipmax <n>, flippaper <0|1>), model <0|1>, reset. Knobs save as you set them.")
             .WithArgs(api.ChatCommands.Parsers.OptionalAll("arg"))
             .HandleWith(OnBookCommand);
 
@@ -781,6 +781,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
                 cfg.Tilt = p.TiltDeg; cfg.Yaw = p.YawDeg; cfg.Dist = p.Dist;
                 cfg.Scale = p.Scale; cfg.Fov = p.FovDeg; cfg.Height = p.HeightOff;
                 cfg.Bend = p.BendMax; cfg.Stiff = p.BendStiff; cfg.Lead = p.BendLead; cfg.Corner = p.BendCorner;
+                cfg.Hover = p.HoverLift; cfg.HoverEase = p.HoverSeconds;
                 cfg.FlipSlow = p.FlipSlow; cfg.FlipFast = p.FlipFast; cfg.FlipCurl = p.FlipCurl;
                 cfg.FlipScale = p.FlipScale; cfg.FlipMax = p.FlipMax; cfg.FlipPaper = p.FlipPaper;
             }
@@ -820,6 +821,8 @@ public class AlmanacIlluminatedModSystem : ModSystem
         if (c.Stiff.HasValue) p.BendStiff = c.Stiff.Value;
         if (c.Lead.HasValue) p.BendLead = c.Lead.Value;
         if (c.Corner.HasValue) p.BendCorner = c.Corner.Value;
+        if (c.Hover.HasValue) p.HoverLift = c.Hover.Value;
+        if (c.HoverEase.HasValue) p.HoverSeconds = c.HoverEase.Value;
         if (c.FlipSlow.HasValue) p.FlipSlow = c.FlipSlow.Value;
         if (c.FlipFast.HasValue) p.FlipFast = c.FlipFast.Value;
         if (c.FlipCurl.HasValue) p.FlipCurl = c.FlipCurl.Value;
@@ -852,6 +855,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
         // default", which is what lets a new knob ship without rewriting everyone's file.
         public float? Tilt, Yaw, Dist, Scale, Fov, Height;
         public float? Bend, Stiff, Lead, Corner;
+        public float? Hover, HoverEase;
         public float? FlipSlow, FlipFast, FlipCurl, FlipScale;
         public int? FlipMax;
         public bool? FlipPaper;
@@ -1009,7 +1013,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
                 System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v))
         {
             return TextCommandResult.Error(
-                "Usage: .almbook | .almbook pause [on|off] | .almbook light [on|off|floor <n>] | .almbook tilt|yaw|dist|scale|fov|height <n> | .almbook bend|stiff|lead|corner <n> | .almbook flipslow|flipfast|flipcurl|flipscale|flipmax <n> | .almbook flippaper <0|1> | .almbook model <0|1> | .almbook reset");
+                "Usage: .almbook | .almbook pause [on|off] | .almbook light [on|off|floor <n>] | .almbook tilt|yaw|dist|scale|fov|height <n> | .almbook bend|stiff|lead|corner|hover|hoverease <n> | .almbook flipslow|flipfast|flipcurl|flipscale|flipmax <n> | .almbook flippaper <0|1> | .almbook model <0|1> | .almbook reset");
         }
 
         switch (verb)
@@ -1027,6 +1031,9 @@ public class AlmanacIlluminatedModSystem : ModSystem
             case "stiff": physicalView.BendStiff = GameMath.Clamp(v, 0.2f, 6f); break;
             case "lead": physicalView.BendLead = GameMath.Clamp(v, 0.1f, 4f); break;
             case "corner": physicalView.BendCorner = GameMath.Clamp(v, 0f, 1.5f); break;
+            // The lift on the corner under the cursor. 'hover 0' turns the cue off.
+            case "hover": physicalView.HoverLift = GameMath.Clamp(v, 0f, 1.5f); break;
+            case "hoverease": physicalView.HoverSeconds = GameMath.Clamp(v, 0.01f, 1f); break;
             // The leafing-through series played when a jump crosses more than one spread.
             case "flipslow": physicalView.FlipSlow = GameMath.Clamp(v, 0.02f, 0.6f); break;
             case "flipfast": physicalView.FlipFast = GameMath.Clamp(v, 0.02f, 0.6f); break;
@@ -1037,7 +1044,7 @@ public class AlmanacIlluminatedModSystem : ModSystem
             default:
                 return TextCommandResult.Error(
                     $"Unknown knob '{verb}'. pause, tilt, yaw, dist, scale, fov, height, "
-                    + "bend, stiff, lead, corner, flipslow, flipfast, flipcurl, flipscale, flipmax, "
+                    + "bend, stiff, lead, corner, hover, hoverease, flipslow, flipfast, flipcurl, flipscale, flipmax, "
                     + "flippaper, model, quad, reset, status.");
         }
 
