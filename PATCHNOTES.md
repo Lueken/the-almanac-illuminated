@@ -17,12 +17,12 @@ high." Chanka and Pun found it, but only by accident. GamerGoblin and Vinni_Pukh
 icon. My first answer in the thread was that the book is a book and a page turn is a page turn,
 and that there was already a turn icon. Both halves of that were wrong, and the code says so.
 
-`cornerBounds` was built from the book *plate* rect — `(bookX, 0, bookW, bookH)`. The parchment
+`cornerBounds` was built from the book *plate* rect, `(bookX, 0, bookW, bookH)`. The parchment
 the reader sees is painted across the whole *dialog* rect: `DrawPhysicalPages` fills `bgBounds`,
 and `PhysicalBookView` textures that capture onto the page quad edge to edge, un-inset and
 un-letterboxed. `dialogH` is `bookH + btnRow`, so a 38-unit strip of fully visible page along the
 bottom was dead to the mouse. The folio number is drawn at `dialogH - 12`, which is **26 units
-below the bottom of the clickable region** — the one mark that says "this is the bottom of the
+below the bottom of the clickable region**. The one mark that says "this is the bottom of the
 page" sat outside the only control on it. At a small window or a high GUI scale the dead strip is
 proportionally larger, and the camera tilt magnifies exactly that part of the page.
 
@@ -35,8 +35,8 @@ the plate, and the plate is smallest precisely where a player is least able to a
 **The live corner lifts under the cursor.**
 
 There is no page-turn icon in this mod and there never was; the class comment claimed Prev/Next
-buttons that do not exist either. The corner click is the only page-turn input in the book — no
-buttons, no hotkey, no wheel — and nothing announced it. "It is a physical book" is a fair
+buttons that do not exist either. The corner click is the only page-turn input in the book. No
+buttons, no hotkey, no wheel, and nothing announced it. "It is a physical book" is a fair
 argument for not bolting an arrow onto the page, and no argument at all for an invisible control:
 a real book's loose corner is something you can see.
 
